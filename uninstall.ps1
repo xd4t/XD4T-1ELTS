@@ -11,6 +11,11 @@ Get-Process -Name "xd4t-ielts65" -ErrorAction SilentlyContinue | Stop-Process -F
 Get-Process -Name "XD4TIeltsBar" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 350
 
+if (Get-ScheduledTask -TaskName "XD4T-IeltsBar" -ErrorAction SilentlyContinue) {
+    Unregister-ScheduledTask -TaskName "XD4T-IeltsBar" -Confirm:$false
+    Write-Host "[uninstall] Removed Scheduled Task XD4T-IeltsBar"
+}
+
 $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 if (Test-Path -LiteralPath $runKey) {
     Remove-ItemProperty -Path $runKey -Name "XD4TIeltsBar" -ErrorAction SilentlyContinue

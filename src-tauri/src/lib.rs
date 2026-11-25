@@ -1,6 +1,7 @@
 mod ai;
 mod db;
 mod models;
+mod roadmap_parser;
 mod seed_data;
 mod srs;
 
@@ -85,14 +86,21 @@ async fn grade_writing(
     prompt: String,
     content: String,
 ) -> Result<GradeResponseDto, String> {
-    let (api_key, model) = {
+    let (api_key, model, focus_notes) = {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         let s = db::get_settings_raw(&conn)?;
-        (s.gemini_api_key, s.gemini_model)
+        (s.gemini_api_key, s.gemini_model, s.writing_focus_notes)
     };
 
-    let (result, endpoint) =
-        ai::grade_writing_with_gemini(&api_key, &model, &mode, &prompt, &content).await?;
+    let (result, endpoint) = ai::grade_writing_with_gemini(
+        &api_key,
+        &model,
+        &mode,
+        &prompt,
+        &content,
+        &focus_notes,
+    )
+    .await?;
 
     let word_count = content.split_whitespace().count() as i64;
     let feedback_json = serde_json::to_string(&result).unwrap_or_default();
@@ -203,6 +211,77 @@ fn update_settings(
     )?;
     let _ = db::write_widget_status(&conn);
     Ok(res)
+}
+
+#[tauri::command]
+fn clear_gemini_api_key(state: State<'_, AppState>) -> Result<SettingsPublic, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let res = db::clear_gemini_api_key(&conn)?;
+    let _ = db::write_widget_status(&conn);
+    Ok(res)
+}
+
+#[tauri::command]
+async fn test_gemini_connection(
+    state: State<'_, AppState>,
+    api_key: Option<String>,
+    model: Option<String>,
+) -> Result<ai::ApiTestResult, String> {
+    let (saved_key, saved_model) = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        let s = db::get_settings_raw(&conn)?;
+        (s.gemini_api_key, s.gemini_model)
+    };
+    let effective_key = api_key
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty())
+        .unwrap_or(saved_key);
+    let effective_model = model
+        .map(|m| m.trim().to_string())
+        .filter(|m| !m.is_empty())
+        .unwrap_or(saved_model);
+
+    ai::test_gemini_connection_live(&effective_key, &effective_model).await
+}
+
+#[tauri::command]
+fn get_roadmap_prompt() -> String {
+    roadmap_parser::get_roadmap_ai_prompt()
+}
+
+#[tauri::command]
+fn get_sample_roadmap_md() -> String {
+    roadmap_parser::get_sample_roadmap_md()
+}
+
+#[tauri::command]
+fn preview_roadmap_md(markdown: String) -> Result<roadmap_parser::RoadmapPreview, String> {
+    let parsed = roadmap_parser::parse_roadmap_markdown(&markdown)?;
+    Ok(roadmap_parser::build_preview(&parsed))
+}
+
+#[tauri::command]
+fn import_roadmap_md(
+    state: State<'_, AppState>,
+    markdown: String,
+    replace_existing: bool,
+    merge_vocab_errors: Option<bool>,
+) -> Result<DashboardState, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::import_roadmap_to_db(
+        &conn,
+        &markdown,
+        replace_existing,
+        merge_vocab_errors.unwrap_or(true),
+    )?;
+    let _ = db::write_widget_status(&conn);
+    db::get_dashboard_state(&conn)
+}
+
+#[tauri::command]
+fn export_current_roadmap_md(state: State<'_, AppState>) -> Result<String, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::export_roadmap_markdown(&conn)
 }
 
 fn show_main_window(app: &tauri::AppHandle) {
@@ -343,6 +422,13 @@ pub fn run() {
             add_practice_score,
             toggle_roadmap_item,
             update_settings,
+            clear_gemini_api_key,
+            test_gemini_connection,
+            get_roadmap_prompt,
+            get_sample_roadmap_md,
+            preview_roadmap_md,
+            import_roadmap_md,
+            export_current_roadmap_md,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

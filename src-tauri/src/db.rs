@@ -1,5 +1,6 @@
 use chrono::{Duration, Local, NaiveDate};
 use rusqlite::{params, Connection, OptionalExtension};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -7,8 +8,46 @@ use crate::models::{
     DailyQuest, DashboardState, ErrorLog, Essay, PracticeScore, RoadmapItem, Settings,
     SettingsPublic, SkillBand, StudyDay, VocabCard,
 };
+use crate::roadmap_parser::{parse_roadmap_markdown, ParsedQuest};
 use crate::seed_data::{default_writing_prompts, ROADMAP_SEEDS, VOCAB_SEEDS};
 use crate::srs::apply_sm2;
+
+pub fn default_writing_checklist() -> Vec<String> {
+    vec![
+        "Chủ ngữ số ít (-s/-es/has)".to_string(),
+        "Danh từ đếm được (a/an/the/-s)".to_string(),
+        "chance/change, choose/choice, effect/affect".to_string(),
+        "Tính từ/từ loại (harmful, In addition)".to_string(),
+        "Không comma splice / câu cụt".to_string(),
+        "Đúng khung, kết bài không thêm ý mới".to_string(),
+    ]
+}
+
+pub fn default_writing_focus_notes() -> Vec<String> {
+    vec![
+        "Nhóm 1: Subject-verb agreement (everybody knows), countable nouns needing a/an/the or -s (humans/people), articles.".to_string(),
+        "Nhóm 2: Confused words (change/chance, choose/choice, effect/affect) and word family (harmful vs harmfully, In addition vs In additionally).".to_string(),
+        "Nhóm 3: Comma splices (joining 2 independent clauses with a comma) and sentence fragments.".to_string(),
+    ]
+}
+
+pub fn default_skill_targets() -> BTreeMap<String, f64> {
+    let mut map = BTreeMap::new();
+    map.insert("Listening".to_string(), 7.5);
+    map.insert("Reading".to_string(), 7.0);
+    map.insert("Speaking".to_string(), 6.5);
+    map.insert("Writing".to_string(), 6.0);
+    map
+}
+
+pub fn default_phase_labels() -> BTreeMap<i64, String> {
+    let mut map = BTreeMap::new();
+    map.insert(1, "GĐ1 · Diệt lỗi nền & 5 khung T2 + 3 biểu đồ T1 (T1–7)".to_string());
+    map.insert(2, "GĐ2 · Tăng tốc & 6 cấu trúc nâng cao (T8–15)".to_string());
+    map.insert(3, "GĐ3 · Vùng đệm 7.0 & Forecast thực chiến (T16–21)".to_string());
+    map.insert(4, "GĐ4 · Nước rút phòng thi (T22–24)".to_string());
+    map
+}
 
 pub fn data_dir() -> Result<PathBuf, String> {
     let base = std::env::var_os("APPDATA")
@@ -143,6 +182,16 @@ pub fn init_schema_and_seed(conn: &Connection, seed_path: Option<&Path>) -> Resu
     conn.execute("INSERT OR IGNORE INTO settings (id) VALUES (1)", [])
         .map_err(|e| format!("Settings seed error: {e}"))?;
 
+    for col_sql in [
+        "ALTER TABLE settings ADD COLUMN writing_checklist_json TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE settings ADD COLUMN writing_focus_json TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE settings ADD COLUMN skill_targets_json TEXT NOT NULL DEFAULT '{}'",
+        "ALTER TABLE settings ADD COLUMN phase_labels_json TEXT NOT NULL DEFAULT '{}'",
+        "ALTER TABLE settings ADD COLUMN daily_quests_template_json TEXT NOT NULL DEFAULT '[]'",
+    ] {
+        let _ = conn.execute(col_sql, []);
+    }
+
     if let Some(path) = seed_path {
         import_seed_key_if_needed(conn, path)?;
     }
@@ -268,30 +317,50 @@ pub fn ensure_today_quests(conn: &Connection, today: &str) -> Result<(), String>
         .map_err(|e| e.to_string())?;
 
     if count == 0 {
-        let defaults = [
-            (
-                "Ôn 10 thẻ Collocation (SRS)",
-                "SRS Flashcards · giữ chuỗi mỗi ngày",
-                8_i64,
-            ),
-            (
-                "Viết 1 đoạn Body Paragraph (~90 từ) & chấm AI",
-                "Chủ đề tủ IELTS · luyện câu chuẩn 6.5",
-                15_i64,
-            ),
-            (
-                "Làm 1 Passage Reading trên Study4 & nhập điểm",
-                "Cambridge Practice · bấm giờ 15–20 phút",
-                12_i64,
-            ),
-        ];
-        for (title, meta, mins) in defaults {
-            conn.execute(
-                "INSERT INTO daily_quests (date, track, title, meta, minutes, done)
-                 VALUES (?1, 'ielts', ?2, ?3, ?4, 0)",
-                params![today, title, meta, mins],
+        let tmpl_json: String = conn
+            .query_row(
+                "SELECT COALESCE(daily_quests_template_json, '[]') FROM settings WHERE id = 1",
+                [],
+                |r| r.get(0),
             )
-            .map_err(|e| e.to_string())?;
+            .unwrap_or_else(|_| "[]".to_string());
+        let custom_quests: Vec<ParsedQuest> = serde_json::from_str(&tmpl_json).unwrap_or_default();
+
+        if !custom_quests.is_empty() {
+            for q in custom_quests {
+                conn.execute(
+                    "INSERT INTO daily_quests (date, track, title, meta, minutes, done)
+                     VALUES (?1, 'ielts', ?2, ?3, ?4, 0)",
+                    params![today, q.title, q.meta, q.minutes],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        } else {
+            let defaults = [
+                (
+                    "Ôn 10 thẻ Collocation (SRS)",
+                    "SRS Flashcards · giữ chuỗi mỗi ngày",
+                    8_i64,
+                ),
+                (
+                    "Viết 1 đoạn Body Paragraph (~90 từ) & chấm AI",
+                    "Chủ đề tủ IELTS · luyện câu chuẩn 6.5",
+                    15_i64,
+                ),
+                (
+                    "Làm 1 Passage Reading trên Study4 & nhập điểm",
+                    "Cambridge Practice · bấm giờ 15–20 phút",
+                    12_i64,
+                ),
+            ];
+            for (title, meta, mins) in defaults {
+                conn.execute(
+                    "INSERT INTO daily_quests (date, track, title, meta, minutes, done)
+                     VALUES (?1, 'ielts', ?2, ?3, ?4, 0)",
+                    params![today, title, meta, mins],
+                )
+                .map_err(|e| e.to_string())?;
+            }
         }
     }
     Ok(())
@@ -299,10 +368,37 @@ pub fn ensure_today_quests(conn: &Connection, today: &str) -> Result<(), String>
 
 pub fn get_settings_raw(conn: &Connection) -> Result<Settings, String> {
     conn.query_row(
-        "SELECT theme, gemini_api_key, gemini_model, exam_date, reminder_time, autostart, target_band
+        "SELECT theme, gemini_api_key, gemini_model, exam_date, reminder_time, autostart, target_band,
+                writing_checklist_json, writing_focus_json, skill_targets_json, phase_labels_json
          FROM settings WHERE id = 1",
         [],
         |r| {
+            let chk_json: String = r.get(7)?;
+            let foc_json: String = r.get(8)?;
+            let tgt_json: String = r.get(9)?;
+            let ph_json: String = r.get(10)?;
+
+            let mut writing_checklist: Vec<String> =
+                serde_json::from_str(&chk_json).unwrap_or_default();
+            if writing_checklist.is_empty() {
+                writing_checklist = default_writing_checklist();
+            }
+            let mut writing_focus_notes: Vec<String> =
+                serde_json::from_str(&foc_json).unwrap_or_default();
+            if writing_focus_notes.is_empty() {
+                writing_focus_notes = default_writing_focus_notes();
+            }
+            let mut skill_targets: BTreeMap<String, f64> =
+                serde_json::from_str(&tgt_json).unwrap_or_default();
+            if skill_targets.is_empty() {
+                skill_targets = default_skill_targets();
+            }
+            let mut phase_labels: BTreeMap<i64, String> =
+                serde_json::from_str(&ph_json).unwrap_or_default();
+            if phase_labels.is_empty() {
+                phase_labels = default_phase_labels();
+            }
+
             Ok(Settings {
                 theme: r.get(0)?,
                 gemini_api_key: r.get(1)?,
@@ -311,6 +407,10 @@ pub fn get_settings_raw(conn: &Connection) -> Result<Settings, String> {
                 reminder_time: r.get(4)?,
                 autostart: r.get::<_, i64>(5)? != 0,
                 target_band: r.get(6)?,
+                writing_checklist,
+                writing_focus_notes,
+                skill_targets,
+                phase_labels,
             })
         },
     )
@@ -328,7 +428,16 @@ pub fn get_settings_public(conn: &Connection) -> Result<SettingsPublic, String> 
         reminder_time: s.reminder_time,
         autostart: s.autostart,
         target_band: s.target_band,
+        writing_checklist: s.writing_checklist,
+        writing_focus_notes: s.writing_focus_notes,
+        phase_labels: s.phase_labels,
     })
+}
+
+pub fn clear_gemini_api_key(conn: &Connection) -> Result<SettingsPublic, String> {
+    conn.execute("UPDATE settings SET gemini_api_key = '' WHERE id = 1", [])
+        .map_err(|e| e.to_string())?;
+    get_settings_public(conn)
 }
 
 pub fn update_settings(
@@ -723,14 +832,16 @@ pub fn get_dashboard_state(conn: &Connection) -> Result<DashboardState, String> 
 
     let heatmap = get_heatmap(conn, today_naive, 70)?;
 
-    let targets = [
-        ("Listening", 7.5),
-        ("Reading", 7.0),
-        ("Speaking", 6.5),
-        ("Writing", 6.0),
-    ];
+    let raw_settings = get_settings_raw(conn)?;
+    let default_targets = default_skill_targets();
     let mut skill_bands = Vec::new();
-    for (skill, target) in targets {
+    for skill in ["Listening", "Reading", "Speaking", "Writing"] {
+        let target = raw_settings
+            .skill_targets
+            .get(skill)
+            .copied()
+            .or_else(|| default_targets.get(skill).copied())
+            .unwrap_or(6.5);
         let latest: f64 = conn
             .query_row(
                 "SELECT score FROM practice_scores WHERE skill = ?1 ORDER BY id DESC LIMIT 1",
@@ -861,6 +972,285 @@ pub struct WidgetStatus {
     pub days_left: i64,
     pub today_minutes: i64,
     pub updated_at: String,
+}
+
+pub fn import_roadmap_to_db(
+    conn: &Connection,
+    markdown: &str,
+    replace_existing: bool,
+    merge_vocab_errors: bool,
+) -> Result<(), String> {
+    let parsed = parse_roadmap_markdown(markdown)?;
+    let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
+    let cur = get_settings_raw(conn)?;
+
+    let new_exam = parsed.exam_date.unwrap_or(cur.exam_date);
+    let new_target = parsed
+        .buffer_target
+        .or(parsed.overall_target)
+        .unwrap_or(cur.target_band);
+    let new_rem = parsed.reminder_time.unwrap_or(cur.reminder_time);
+
+    let new_checklist = if !parsed.writing_checklist.is_empty() {
+        parsed.writing_checklist
+    } else if replace_existing {
+        default_writing_checklist()
+    } else {
+        cur.writing_checklist
+    };
+
+    let new_focus = if !parsed.writing_focus_notes.is_empty() {
+        parsed.writing_focus_notes
+    } else if replace_existing {
+        default_writing_focus_notes()
+    } else {
+        cur.writing_focus_notes
+    };
+
+    let mut new_targets = cur.skill_targets.clone();
+    for sb in &parsed.skill_bands {
+        new_targets.insert(sb.skill.clone(), sb.target);
+    }
+
+    let new_phase_labels = if !parsed.phase_labels.is_empty() {
+        parsed.phase_labels.clone()
+    } else if replace_existing {
+        default_phase_labels()
+    } else {
+        cur.phase_labels
+    };
+
+    let chk_json = serde_json::to_string(&new_checklist).map_err(|e| e.to_string())?;
+    let foc_json = serde_json::to_string(&new_focus).map_err(|e| e.to_string())?;
+    let tgt_json = serde_json::to_string(&new_targets).map_err(|e| e.to_string())?;
+    let ph_json = serde_json::to_string(&new_phase_labels).map_err(|e| e.to_string())?;
+    let quests_tmpl_json = if !parsed.daily_quests.is_empty() {
+        Some(serde_json::to_string(&parsed.daily_quests).map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
+
+    conn.execute("BEGIN IMMEDIATE", []).map_err(|e| e.to_string())?;
+    let res: Result<(), String> = (|| {
+        conn.execute(
+            "UPDATE settings
+             SET exam_date = ?1, reminder_time = ?2, target_band = ?3,
+                 writing_checklist_json = ?4, writing_focus_json = ?5,
+                 skill_targets_json = ?6, phase_labels_json = ?7
+             WHERE id = 1",
+            params![new_exam, new_rem, new_target, chk_json, foc_json, tgt_json, ph_json],
+        )
+        .map_err(|e| e.to_string())?;
+
+        if let Some(qt) = quests_tmpl_json {
+            conn.execute(
+                "UPDATE settings SET daily_quests_template_json = ?1 WHERE id = 1",
+                params![qt],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        if !parsed.skill_bands.is_empty() {
+            if replace_existing {
+                conn.execute("DELETE FROM practice_scores", [])
+                    .map_err(|e| e.to_string())?;
+            }
+            for sb in &parsed.skill_bands {
+                conn.execute(
+                    "INSERT INTO practice_scores (skill, source, score, note, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![
+                        sb.skill,
+                        "Nạp từ lộ trình .md",
+                        sb.current,
+                        format!("Mục tiêu {:.1}", sb.target),
+                        today
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+
+        if !parsed.daily_quests.is_empty() {
+            if replace_existing {
+                conn.execute(
+                    "DELETE FROM daily_quests WHERE date = ?1 AND track = 'ielts'",
+                    params![today],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            for q in &parsed.daily_quests {
+                conn.execute(
+                    "INSERT INTO daily_quests (date, track, title, meta, minutes, done)
+                     VALUES (?1, 'ielts', ?2, ?3, ?4, 0)",
+                    params![today, q.title, q.meta, q.minutes],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+
+        if !parsed.roadmap_weeks.is_empty() {
+            if replace_existing {
+                conn.execute("DELETE FROM roadmap_items WHERE track = 'ielts'", [])
+                    .map_err(|e| e.to_string())?;
+            }
+            for w in &parsed.roadmap_weeks {
+                conn.execute(
+                    "INSERT INTO roadmap_items (track, phase, week_label, title, done)
+                     VALUES ('ielts', ?1, ?2, ?3, 0)",
+                    params![w.phase, w.week_label, w.title],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+
+        if !parsed.error_logs.is_empty() {
+            if replace_existing && !merge_vocab_errors {
+                conn.execute("DELETE FROM error_logs", [])
+                    .map_err(|e| e.to_string())?;
+            }
+            for err in &parsed.error_logs {
+                upsert_error_log(conn, &err.category, &err.wrong_text, &err.right_text)?;
+            }
+        }
+
+        if !parsed.vocab_cards.is_empty() {
+            if replace_existing && !merge_vocab_errors {
+                conn.execute("DELETE FROM vocab_cards WHERE track = 'ielts'", [])
+                    .map_err(|e| e.to_string())?;
+            }
+            for v in &parsed.vocab_cards {
+                let exists: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM vocab_cards WHERE lower(word) = lower(?1)",
+                        params![v.word],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(0);
+                if exists == 0 {
+                    conn.execute(
+                        "INSERT INTO vocab_cards (track, topic, word, meaning, example, ease, interval_days, reps, due_date)
+                         VALUES ('ielts', ?1, ?2, ?3, ?4, 2.5, 0, 0, ?5)",
+                        params![v.topic, v.word, v.meaning, v.example, today],
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
+            }
+        }
+
+        Ok(())
+    })();
+
+    match res {
+        Ok(()) => {
+            conn.execute("COMMIT", []).map_err(|e| e.to_string())?;
+            Ok(())
+        }
+        Err(e) => {
+            let _ = conn.execute("ROLLBACK", []);
+            Err(e)
+        }
+    }
+}
+
+pub fn export_roadmap_markdown(conn: &Connection) -> Result<String, String> {
+    let dash = get_dashboard_state(conn)?;
+    let mut lines: Vec<String> = Vec::new();
+    lines.push("---".to_string());
+    lines.push(format!("exam_date: {}", dash.settings.exam_date));
+
+    let avg_cur = if dash.skill_bands.is_empty() {
+        5.0
+    } else {
+        let sum: f64 = dash.skill_bands.iter().map(|b| b.current).sum();
+        ((sum / dash.skill_bands.len() as f64) * 2.0).round() / 2.0
+    };
+    let avg_tgt = if dash.skill_bands.is_empty() {
+        6.5
+    } else {
+        let sum: f64 = dash.skill_bands.iter().map(|b| b.target).sum();
+        ((sum / dash.skill_bands.len() as f64) * 2.0).round() / 2.0
+    };
+    let total_mins: i64 = dash.quests.iter().map(|q| q.minutes).sum::<i64>().max(30);
+
+    lines.push(format!("overall_current: {:.1}", avg_cur));
+    lines.push(format!("overall_target: {:.1}", avg_tgt));
+    lines.push(format!("buffer_target: {:.1}", dash.settings.target_band));
+    for sb in &dash.skill_bands {
+        lines.push(format!(
+            "{}: {:.1} -> {:.1}",
+            sb.skill.to_lowercase(),
+            sb.current,
+            sb.target
+        ));
+    }
+    lines.push(format!("daily_minutes: {}", total_mins));
+    lines.push(format!("reminder_time: {}", dash.settings.reminder_time));
+    lines.push("---".to_string());
+    lines.push(String::new());
+
+    lines.push("## Nhiệm vụ hàng ngày".to_string());
+    for q in &dash.quests {
+        lines.push(format!("- [{}p] {} | {}", q.minutes, q.title, q.meta));
+    }
+    lines.push(String::new());
+
+    lines.push("## Checklist Writing cá nhân".to_string());
+    for c in &dash.settings.writing_checklist {
+        lines.push(format!("- {c}"));
+    }
+    lines.push(String::new());
+
+    lines.push("## Điểm yếu Writing cần AI soi kỹ".to_string());
+    for f in &dash.settings.writing_focus_notes {
+        lines.push(format!("- {f}"));
+    }
+    lines.push(String::new());
+
+    lines.push("## Sổ lỗi ban đầu".to_string());
+    for e in dash.error_logs.iter().take(15) {
+        lines.push(format!("- [{}] {} -> {}", e.category, e.wrong_text, e.right_text));
+    }
+    lines.push(String::new());
+
+    let mut v_stmt = conn
+        .prepare("SELECT topic, word, meaning, example FROM vocab_cards ORDER BY id ASC LIMIT 20")
+        .map_err(|e| e.to_string())?;
+    let v_rows = v_stmt
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+    lines.push("## Từ vựng SRS ban đầu".to_string());
+    for vr in v_rows {
+        let (topic, word, meaning, example) = vr.map_err(|e| e.to_string())?;
+        lines.push(format!("- [{topic}] {word} | {meaning} | {example}"));
+    }
+    lines.push(String::new());
+
+    lines.push("## Lộ trình theo tuần".to_string());
+    let mut last_phase: i64 = -1;
+    for r in &dash.roadmap {
+        if r.phase != last_phase {
+            let label = dash
+                .settings
+                .phase_labels
+                .get(&r.phase)
+                .cloned()
+                .unwrap_or_else(|| format!("GĐ{}: Giai đoạn {}", r.phase, r.phase));
+            lines.push(format!("### {label}"));
+            last_phase = r.phase;
+        }
+        lines.push(format!("- {}: {}", r.week_label, r.title));
+    }
+    lines.push(String::new());
+
+    Ok(lines.join("\n"))
 }
 
 pub fn build_widget_status(conn: &Connection) -> Result<WidgetStatus, String> {
@@ -999,5 +1389,27 @@ mod tests {
         assert_eq!(ws.quests_total, 3);
         assert_eq!(ws.overall_band, 5.0);
         assert_eq!(ws.target_band, 7.0);
+    }
+
+    #[test]
+    fn import_and_export_roadmap_roundtrip() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema_and_seed(&conn, None).unwrap();
+
+        let md = crate::roadmap_parser::get_sample_roadmap_md();
+        import_roadmap_to_db(&conn, &md, true, true).unwrap();
+
+        let dash = get_dashboard_state(&conn).unwrap();
+        assert_eq!(dash.settings.exam_date, "2027-05-15");
+        assert_eq!(dash.settings.writing_checklist.len(), 5);
+        assert_eq!(dash.settings.writing_focus_notes.len(), 3);
+        assert_eq!(dash.roadmap.len(), 6);
+        assert_eq!(dash.quests.len(), 3);
+        assert!(dash.total_vocab_count >= 40);
+
+        let exported = export_roadmap_markdown(&conn).unwrap();
+        assert!(exported.contains("## Nhiệm vụ hàng ngày"));
+        assert!(exported.contains("## Checklist Writing cá nhân"));
+        assert!(exported.contains("### GĐ1:"));
     }
 }

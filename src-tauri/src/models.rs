@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use std::collections::BTreeMap;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub theme: String,
@@ -9,6 +11,10 @@ pub struct Settings {
     pub reminder_time: String,
     pub autostart: bool,
     pub target_band: f64,
+    pub writing_checklist: Vec<String>,
+    pub writing_focus_notes: Vec<String>,
+    pub skill_targets: BTreeMap<String, f64>,
+    pub phase_labels: BTreeMap<i64, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,6 +27,9 @@ pub struct SettingsPublic {
     pub reminder_time: String,
     pub autostart: bool,
     pub target_band: f64,
+    pub writing_checklist: Vec<String>,
+    pub writing_focus_notes: Vec<String>,
+    pub phase_labels: BTreeMap<i64, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -25,10 +25,14 @@
 |---|---|
 | ![Vocab SRS](docs/screenshots/03-vocab-srs-dark.png) | ![Roadmap & Error Log](docs/screenshots/04-roadmap-errors-dark.png) |
 
-### Modal Nhập điểm & Cài đặt (Dark / Light Mode)
-| Nhập điểm đề vừa làm (Dark) | Cài đặt hệ thống (Light) |
+### Modal Nhập điểm, Nạp lộ trình `.md` & Cài đặt (Dark / Light Mode)
+| Nhập điểm đề vừa làm (Dark) | Cài đặt & Test API (Dark) |
 |---|---|
-| ![Score Modal Dark](docs/screenshots/05-modal-score-dark.png) | ![Settings Modal Light](docs/screenshots/06-settings-light.png) |
+| ![Score Modal Dark](docs/screenshots/05-modal-score-dark.png) | ![Settings API Test Dark](docs/screenshots/03-settings-api-test-dark.png) |
+
+| Nạp lộ trình `.md` (Dark) | Nạp lộ trình `.md` (Light) |
+|---|---|
+| ![Import Roadmap Dark](docs/screenshots/01-import-roadmap-dark.png) | ![Import Roadmap Light](docs/screenshots/02-import-roadmap-light.png) |
 
 ---
 
@@ -44,11 +48,30 @@
 
 ---
 
+## Cá nhân hóa lộ trình bằng file `.md` + AI
+
+Bất kỳ ai tải app đều có thể tạo lộ trình riêng theo band đầu vào, mục tiêu và ngày thi của mình trong 1 phút:
+
+1. Mở tab **`[4] LỘ TRÌNH & SỔ LỖI`** → bấm **`+ NẠP LỘ TRÌNH .MD`**.
+2. Bấm **`COPY PROMPT TẠO LỘ TRÌNH CHO AI`** (hoặc xem trực tiếp tại [docs/PROMPT-TAO-LO-TRINH.md](docs/PROMPT-TAO-LO-TRINH.md)), dán vào ChatGPT / Claude / Gemini web. AI sẽ hỏi 5 câu ngắn rồi xuất ra file `lo-trinh.md` chuẩn [docs/lo-trinh-mau.md](docs/lo-trinh-mau.md).
+3. Dán nội dung hoặc chọn file `.md` → bấm **`PHÂN TÍCH & XEM TRƯỚC`** → bấm **`ÁP DỤNG LỘ TRÌNH NGAY`**. Toàn bộ 4 tab, nhiệm vụ hàng ngày, Checklist Writing và tiêu chí AI soi lỗi sẽ tự động cập nhật theo lộ trình của bạn.
+
+---
+
+## Tự nạp & kiểm tra Gemini API Key cá nhân
+
+1. Mở **`CÀI ĐẶT`** (hoặc bấm nút **`NẠP API KEY`** trên thanh nhắc ở Tab Hôm nay).
+2. Bấm **`↗ LẤY KEY MIỄN PHÍ TẠI GOOGLE AI STUDIO`** để tạo key miễn phí (`AIza...`).
+3. Dán trực tiếp vào ô nhập (có nút **`HIỆN/ẨN`**) hoặc bấm **`NẠP KEY TỪ FILE .TXT/.ENV`**.
+4. Bấm **`KIỂM TRA KẾT NỐI API`** để app test sống qua HTTP header `x-goog-api-key` (không truyền key trên URL) trước khi lưu. Nếu chưa muốn dùng key, bạn vẫn có thể dùng nút **`COPY PROMPT CHẤM AI`** hoàn toàn miễn phí.
+
+---
+
 ## Cài đặt siêu nhanh (1-Click cho máy mới / sau khi reset Windows)
 
 Không cần cài Rust hay Node.js:
 
-1. Tải **`XD4T-1ELTS-v1.0.0-win-x64.zip`** từ trang [**GitHub Releases**](../../releases) và giải nén.
+1. Tải **`XD4T-1ELTS-v1.1.0-win-x64.zip`** từ trang [**GitHub Releases**](../../releases) và giải nén.
 2. Mở PowerShell tại thư mục vừa giải nén và chạy:
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\install.ps1

@@ -7,6 +7,35 @@ export interface SettingsPublic {
   reminder_time: string;
   autostart: boolean;
   target_band: number;
+  writing_checklist: string[];
+  writing_focus_notes: string[];
+  phase_labels: Record<string, string>;
+}
+
+export interface RoadmapPreview {
+  exam_date: string;
+  overall_current: number;
+  overall_target: number;
+  buffer_target: number;
+  skill_bands: SkillBand[];
+  daily_minutes: number;
+  reminder_time: string;
+  quests_count: number;
+  checklist_count: number;
+  focus_notes_count: number;
+  error_logs_count: number;
+  vocab_count: number;
+  phases_count: number;
+  weeks_count: number;
+  phases_summary: string[];
+  warnings: string[];
+}
+
+export interface ApiTestResult {
+  ok: boolean;
+  status_code: number;
+  endpoint: string;
+  message: string;
 }
 
 export interface DailyQuest {

@@ -110,18 +110,28 @@ foreach ($lnkDir in @($desktopDir, $startMenuDir)) {
     }
 }
 
-# 6. Register autostart & launch widget (if enabled)
+# 6. Register autostart (Scheduled Task Interactive + HKCU\Run) & launch widget (if enabled)
 if (-not $NoWidget -and (Test-Path -LiteralPath $widgetDst)) {
     if (-not $NoAutostart) {
+        $taskName = "XD4T-IeltsBar"
+        $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+        $trigger.Delay = "PT5S"
+        $action = New-ScheduledTaskAction -Execute $widgetDst -WorkingDirectory $installDir
+        $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
+        $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+        Register-ScheduledTask -TaskName $taskName -Trigger $trigger -Action $action -Settings $settings -Principal $principal -Force | Out-Null
+        Write-Host "[install] Scheduled Task registered: $taskName (AtLogOn +5s, Interactive)"
+
         $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-        if (-not (Test-Path -LiteralPath $runKey)) {
-            New-Item -Path $runKey -Force | Out-Null
+        if (Test-Path -LiteralPath $runKey) {
+            Remove-ItemProperty -Path $runKey -Name "XD4TIeltsBar" -ErrorAction SilentlyContinue
         }
-        Set-ItemProperty -Path $runKey -Name "XD4TIeltsBar" -Value "`"$widgetDst`"" -Type String
-        Write-Host "[install] Autostart registered: HKCU\...\Run\XD4TIeltsBar"
+        Start-ScheduledTask -TaskName $taskName
+        Write-Host "[install] Launched XD4TIeltsBar via Scheduled Task"
+    } else {
+        Start-Process -FilePath $widgetDst -WorkingDirectory $installDir
+        Write-Host "[install] Launched XD4TIeltsBar widget"
     }
-    Start-Process -FilePath $widgetDst -WorkingDirectory $installDir
-    Write-Host "[install] Launched XD4TIeltsBar widget"
 }
 
 Write-Host "[install] Done! Open 'XD4T IELTS 6.5' from Desktop or Start Menu." -ForegroundColor Green

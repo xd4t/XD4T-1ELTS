@@ -3,9 +3,11 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import type {
+  ApiTestResult,
   DashboardState,
   GradeResponseDto,
   GradeResult,
+  RoadmapPreview,
   VocabCard,
   WritingPrompt,
 } from './types';
@@ -23,8 +25,33 @@ let cardIdx = 0;
 let cardFlipped = false;
 let draftEssay = '';
 
+let showApiKey = false;
+let apiTestMsg = '';
+let apiTestOk: boolean | null = null;
+let isTestingApi = false;
+
+let roadmapDraftMd = '';
+let roadmapPreview: RoadmapPreview | null = null;
+let roadmapStatusMsg = '';
+let roadmapStatusOk: boolean | null = null;
+
 let pomoSecs = 15 * 60;
 let pomoTimer: number | null = null;
+
+function extractApiKeyFromText(raw: string): string {
+  const lines = raw.split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eqIdx = trimmed.indexOf('=');
+    const candidate = eqIdx >= 0 ? trimmed.slice(eqIdx + 1).trim().replace(/^["']|["']$/g, '') : trimmed;
+    if (candidate.startsWith('AIza') || candidate.startsWith('AQ.')) {
+      return candidate;
+    }
+  }
+  const match = raw.match(/(AIza[0-9A-Za-z_-]{20,}|AQ\.[0-9A-Za-z._-]{20,})/);
+  return match ? match[1] : raw.trim();
+}
 
 function esc(s: string): string {
   return s
@@ -54,11 +81,8 @@ function renderApp() {
   const curPrompt = getCurrentPrompt();
   const modePrompts = dash.prompts.filter((p) => p.mode === writingMode);
 
-  const p1 = dash.roadmap.filter((r) => r.phase === 1);
-  const p2 = dash.roadmap.filter((r) => r.phase === 2);
-  const p3 = dash.roadmap.filter((r) => r.phase === 3);
-  const p4 = dash.roadmap.filter((r) => r.phase === 4);
-  const pct = (arr: typeof p1) =>
+  const phaseNumbers = Array.from(new Set(dash.roadmap.map((r) => r.phase))).sort((a, b) => a - b);
+  const pct = (arr: typeof dash extends null ? never : NonNullable<typeof dash>['roadmap']) =>
     arr.length ? Math.round((arr.filter((x) => x.done).length / arr.length) * 100) : 0;
 
   const curCard = dueCards[cardIdx];
@@ -91,6 +115,14 @@ function renderApp() {
     <div class="content">
       <!-- TAB 1: TODAY -->
       <div class="panel ${activeTab === 'today' ? 'active' : ''}" id="tab-today">
+        ${
+          !dash.settings.has_api_key
+            ? `<div class="api-banner">
+                <span>Chưa có Gemini API Key — bấm <b>Cài đặt</b> để nạp miễn phí hoặc dùng <b>Copy-Prompt</b></span>
+                <button class="btn btn-sm" id="bannerOpenSettingsBtn">NẠP API KEY</button>
+              </div>`
+            : ''
+        }
         <div class="grid-4" style="margin-bottom:12px;">
           ${dash.skill_bands
             .map((b) => {
@@ -188,12 +220,12 @@ function renderApp() {
             <div style="border:1px solid var(--m-line);background:var(--m-bg);padding:8px;margin-top:8px;font-size:11px;">
               <div style="font-weight:700;color:var(--m-muted);margin-bottom:5px;text-transform:uppercase;">CHECKLIST SOÁT LỖI 3 PHÚT TRƯỚC KHI NỘP:</div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;">
-                <label style="display:flex;gap:5px;align-items:flex-start;cursor:pointer;"><input type="checkbox" class="chk-3m" /> <span>1. Chủ ngữ số ít (-s/-es/has)</span></label>
-                <label style="display:flex;gap:5px;align-items:flex-start;cursor:pointer;"><input type="checkbox" class="chk-3m" /> <span>2. Danh từ đếm được (a/an/the/-s)</span></label>
-                <label style="display:flex;gap:5px;align-items:flex-start;cursor:pointer;"><input type="checkbox" class="chk-3m" /> <span>3. chance/change, choose/choice, effect/affect</span></label>
-                <label style="display:flex;gap:5px;align-items:flex-start;cursor:pointer;"><input type="checkbox" class="chk-3m" /> <span>4. Tính từ/từ loại (harmful, In addition)</span></label>
-                <label style="display:flex;gap:5px;align-items:flex-start;cursor:pointer;"><input type="checkbox" class="chk-3m" /> <span>5. Không comma splice / câu cụt</span></label>
-                <label style="display:flex;gap:5px;align-items:flex-start;cursor:pointer;"><input type="checkbox" class="chk-3m" /> <span>6. Đúng khung, kết bài không thêm ý mới</span></label>
+                ${dash.settings.writing_checklist
+                  .map(
+                    (item, idx) =>
+                      `<label style="display:flex;gap:5px;align-items:flex-start;cursor:pointer;"><input type="checkbox" class="chk-3m" /> <span>${idx + 1}. ${esc(item)}</span></label>`
+                  )
+                  .join('')}
               </div>
             </div>
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:6px;flex-wrap:wrap;">
@@ -280,25 +312,23 @@ function renderApp() {
         <div class="grid-2">
           <div class="box">
             <div class="box-title">
-              <span>LỘ TRÌNH 24 TUẦN V2 (4 GIAI ĐOẠN · 3 CHECKPOINT)</span>
-              <span>${dash.roadmap.filter((r) => r.done).length} / ${dash.roadmap.length}</span>
+              <span>LỘ TRÌNH (${dash.roadmap.length} TUẦN · ${phaseNumbers.length} GIAI ĐOẠN)</span>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span>${dash.roadmap.filter((r) => r.done).length} / ${dash.roadmap.length}</span>
+                <button class="btn btn-sm btn-primary" id="openRoadmapModalBtn">+ NẠP LỘ TRÌNH .MD</button>
+              </div>
             </div>
-            <div style="margin-bottom:6px;">
-              <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px;"><b>GĐ1 · Diệt lỗi nền & 5 khung T2 + 3 biểu đồ T1 (T1–7)</b><span>${pct(p1)}%</span></div>
-              <div class="bar-track"><div class="bar-fill" style="width:${pct(p1)}%"></div></div>
-            </div>
-            <div style="margin-bottom:6px;">
-              <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px;"><b>GĐ2 · Tăng tốc & 6 cấu trúc nâng cao (T8–15)</b><span>${pct(p2)}%</span></div>
-              <div class="bar-track"><div class="bar-fill" style="width:${pct(p2)}%"></div></div>
-            </div>
-            <div style="margin-bottom:6px;">
-              <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px;"><b>GĐ3 · Vùng đệm 7.0 & Forecast thực chiến (T16–21)</b><span>${pct(p3)}%</span></div>
-              <div class="bar-track"><div class="bar-fill" style="width:${pct(p3)}%"></div></div>
-            </div>
-            <div style="margin-bottom:10px;">
-              <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px;"><b>GĐ4 · Nước rút phòng thi (T22–24)</b><span>${pct(p4)}%</span></div>
-              <div class="bar-track"><div class="bar-fill" style="width:${pct(p4)}%"></div></div>
-            </div>
+            ${phaseNumbers
+              .map((ph, idx) => {
+                const items = dash!.roadmap.filter((r) => r.phase === ph);
+                const label = dash!.settings.phase_labels[String(ph)] || `GĐ${ph} · Giai đoạn ${ph}`;
+                const mb = idx === phaseNumbers.length - 1 ? '10px' : '6px';
+                return `<div style="margin-bottom:${mb};">
+                  <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px;"><b>${esc(label)}</b><span>${pct(items)}%</span></div>
+                  <div class="bar-track"><div class="bar-fill" style="width:${pct(items)}%"></div></div>
+                </div>`;
+              })
+              .join('')}
             <div class="roadmap-list">
               ${dash.roadmap
                 .map(
@@ -360,10 +390,29 @@ function renderApp() {
     <!-- SETTINGS MODAL -->
     <div class="modal-backdrop" id="settingsModal">
       <div class="modal-box">
-        <div class="box-title"><span>CÀI ĐẶT HỆ THỐNG</span><button class="btn btn-sm" id="closeSettingsBtn">✕</button></div>
+        <div class="box-title"><span>CÀI ĐẶT HỆ THỐNG & API CÁ NHÂN</span><button class="btn btn-sm" id="closeSettingsBtn">✕</button></div>
+        <div class="guide-box">
+          <b>Hướng dẫn lấy Gemini API Key miễn phí (3 bước):</b><br/>
+          1. Bấm nút bên dưới để mở Google AI Studio và đăng nhập Google.<br/>
+          2. Chọn <b>Create API key</b> → copy chuỗi bắt đầu bằng <code>AIza...</code>.<br/>
+          3. Dán vào ô bên dưới hoặc nạp từ file <code>.txt/.env</code>, rồi bấm <b>Kiểm tra kết nối API</b>.
+          <div style="margin-top:6px;">
+            <button class="btn btn-sm" id="openAiStudioBtn">↗ LẤY KEY MIỄN PHÍ TẠI GOOGLE AI STUDIO</button>
+          </div>
+        </div>
         <div class="form-row">
           <label>Gemini API Key ${dash.settings.has_api_key ? `(Đang lưu: ${esc(dash.settings.api_key_masked)})` : '(Chưa có)'}</label>
-          <input type="password" id="setKey" placeholder="Để trống nếu giữ nguyên key hiện tại" />
+          <div class="input-group">
+            <input type="${showApiKey ? 'text' : 'password'}" id="setKey" placeholder="Dán key AIza... hoặc để trống để giữ key cũ" />
+            <button class="btn btn-sm" id="toggleKeyVisBtn" type="button">${showApiKey ? 'ẨN' : 'HIỆN'}</button>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
+            <input type="file" id="apiKeyFileInput" accept=".txt,.env,.key" style="display:none;" />
+            <button class="btn btn-sm" id="loadKeyFileBtn" type="button">NẠP KEY TỪ FILE .TXT/.ENV</button>
+            <button class="btn btn-sm" id="testApiBtn" type="button" ${isTestingApi ? 'disabled' : ''}>${isTestingApi ? 'ĐANG KIỂM TRA...' : 'KIỂM TRA KẾT NỐI API'}</button>
+            <button class="btn btn-sm" id="clearKeyBtn" type="button" ${!dash.settings.has_api_key ? 'disabled' : ''}>XÓA KEY</button>
+          </div>
+          ${apiTestMsg ? `<div class="status-msg ${apiTestOk === true ? 'ok' : apiTestOk === false ? 'err' : ''}">${esc(apiTestMsg)}</div>` : ''}
         </div>
         <div class="form-row">
           <label>Model Gemini</label>
@@ -385,9 +434,88 @@ function renderApp() {
           <input type="checkbox" id="setAutostart" style="width:auto;" ${dash.settings.autostart ? 'checked' : ''} />
           <label for="setAutostart" style="margin:0;cursor:pointer;">Tự khởi động cùng Windows</label>
         </div>
-        <div style="display:flex;justify-content:flex-end;gap:6px;margin-top:14px;">
-          <button class="btn" id="cancelSettingsBtn">HỦY</button>
-          <button class="btn btn-primary" id="saveSettingsBtn">LƯU CÀI ĐẶT</button>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-top:14px;flex-wrap:wrap;">
+          <button class="btn btn-sm" id="settingsToRoadmapBtn" type="button">+ NẠP LỘ TRÌNH .MD</button>
+          <div style="display:flex;gap:6px;">
+            <button class="btn" id="cancelSettingsBtn">HỦY</button>
+            <button class="btn btn-primary" id="saveSettingsBtn">LƯU CÀI ĐẶT</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ROADMAP IMPORT MODAL -->
+    <div class="modal-backdrop" id="roadmapModal">
+      <div class="modal-box modal-wide">
+        <div class="box-title"><span>NẠP LỘ TRÌNH CÁ NHÂN (.MD)</span><button class="btn btn-sm" id="closeRoadmapBtn">✕</button></div>
+
+        <div class="step-card">
+          <div class="step-head"><span>Bước 1 — Tạo file lộ trình bằng AI của bạn</span></div>
+          <div style="font-size:11.5px;color:var(--m-muted);margin-bottom:8px;">
+            Copy prompt phỏng vấn 5 câu bên dưới và dán vào ChatGPT / Claude / Gemini web. AI sẽ tự sinh ra file <code>lo-trinh.md</code> đúng chuẩn 100% cho app.
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button class="btn btn-sm btn-primary" id="copyRoadmapPromptBtn">COPY PROMPT TẠO LỘ TRÌNH CHO AI</button>
+            <button class="btn btn-sm" id="loadSampleRoadmapBtn">XEM MẪU CHUẨN</button>
+            <button class="btn btn-sm" id="exportCurrentRoadmapBtn">XUẤT LỘ TRÌNH HIỆN TẠI (.MD)</button>
+          </div>
+        </div>
+
+        <div class="step-card">
+          <div class="step-head">
+            <span>Bước 2 — Nạp file .md hoặc dán trực tiếp Markdown</span>
+            <div>
+              <input type="file" id="roadmapFileInput" accept=".md,.txt" style="display:none;" />
+              <button class="btn btn-sm" id="pickRoadmapFileBtn">CHỌN FILE .MD TỪ MÁY</button>
+            </div>
+          </div>
+          <textarea class="editor" id="roadmapMdInput" style="min-height:145px;" placeholder="Dán nội dung lo-trinh.md tại đây hoặc bấm [CHỌN FILE .MD TỪ MÁY]...">${esc(roadmapDraftMd)}</textarea>
+        </div>
+
+        <div class="step-card">
+          <div class="step-head">
+            <span>Bước 3 — Xem trước (Preview) & Áp dụng</span>
+            <button class="btn btn-sm" id="previewRoadmapBtn">PHÂN TÍCH & XEM TRƯỚC</button>
+          </div>
+          ${
+            roadmapPreview
+              ? `
+            <div class="preview-grid">
+              <div class="preview-stat"><span>Ngày thi</span><b>${esc(roadmapPreview.exam_date)}</b></div>
+              <div class="preview-stat"><span>Mục tiêu</span><b>${roadmapPreview.overall_current.toFixed(1)} → ${roadmapPreview.overall_target.toFixed(1)}</b></div>
+              <div class="preview-stat"><span>Nhiệm vụ/ngày</span><b>${roadmapPreview.quests_count} mục (${roadmapPreview.daily_minutes}p)</b></div>
+              <div class="preview-stat"><span>Lộ trình tuần</span><b>${roadmapPreview.weeks_count} tuần (${roadmapPreview.phases_count} GĐ)</b></div>
+              <div class="preview-stat"><span>Checklist Writing</span><b>${roadmapPreview.checklist_count} mục</b></div>
+              <div class="preview-stat"><span>Điểm yếu AI soi</span><b>${roadmapPreview.focus_notes_count} nhóm</b></div>
+              <div class="preview-stat"><span>Từ vựng SRS</span><b>${roadmapPreview.vocab_count} thẻ</b></div>
+              <div class="preview-stat"><span>Sổ lỗi ban đầu</span><b>${roadmapPreview.error_logs_count} lỗi</b></div>
+            </div>
+            <div style="font-size:11px;color:var(--m-muted);margin-bottom:4px;">
+              <b>4 Band:</b> ${roadmapPreview.skill_bands.map((b) => `${esc(b.skill)} ${b.current.toFixed(1)}→${b.target.toFixed(1)}`).join(' · ') || 'Giữ nguyên'}
+            </div>
+            ${
+              roadmapPreview.warnings.length
+                ? `<div style="font-size:11px;color:var(--m-warn);margin-top:4px;">⚠ ${roadmapPreview.warnings.map((w) => esc(w)).join(' | ')}</div>`
+                : ''
+            }`
+              : `<div style="font-size:11px;color:var(--m-muted);">Bấm <b>[PHÂN TÍCH & XEM TRƯỚC]</b> để kiểm tra dữ liệu trước khi ghi vào SQLite.</div>`
+          }
+          <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:11px;">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <input type="checkbox" id="chkReplaceRoadmap" checked />
+              <span>Thay thế lộ trình & nhiệm vụ cũ</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <input type="checkbox" id="chkMergeVocabErrors" checked />
+              <span>Gộp thêm từ vựng SRS & sổ lỗi (giữ lịch sử cũ)</span>
+            </label>
+          </div>
+          ${roadmapStatusMsg ? `<div class="status-msg ${roadmapStatusOk === true ? 'ok' : roadmapStatusOk === false ? 'err' : ''}">${esc(roadmapStatusMsg)}</div>` : ''}
+        </div>
+
+        <div style="display:flex;justify-content:flex-end;gap:6px;margin-top:10px;">
+          <button class="btn" id="cancelRoadmapBtn">ĐÓNG</button>
+          <button class="btn btn-primary" id="applyRoadmapBtn">ÁP DỤNG LỘ TRÌNH NGAY</button>
         </div>
       </div>
     </div>
@@ -529,7 +657,10 @@ function bindEvents() {
     copyPromptBtn.onclick = async () => {
       const p = getCurrentPrompt();
       const content = (document.getElementById('essayInput') as HTMLTextAreaElement)?.value || '';
-      const rubric = `Hãy đóng vai Giám khảo IELTS Writing chấm bài dưới đây theo 4 tiêu chí (TA, CC, LR, GRA) và trả kết quả rõ ràng bằng tiếng Việt + bản viết lại Band 6.5:\n\n[CHẾ ĐỘ]: ${writingMode}\n[ĐỀ BÀI]: ${p?.prompt || ''}\n\n[BÀI VIẾT]:\n${content}`;
+      const focusNotes = (dash?.settings.writing_focus_notes || [])
+        .map((n, i) => `${i + 1}. ${n}`)
+        .join('\n');
+      const rubric = `Hãy đóng vai Giám khảo IELTS Writing chấm bài dưới đây theo 4 tiêu chí (TA, CC, LR, GRA) và trả kết quả rõ ràng bằng tiếng Việt + bản viết lại Band 6.5.\n\n[ĐIỂM YẾU CẦN SOI KỸ]:\n${focusNotes}\n\n[CHẾ ĐỘ]: ${writingMode}\n[ĐỀ BÀI]: ${p?.prompt || ''}\n\n[BÀI VIẾT]:\n${content}`;
       await navigator.clipboard.writeText(rubric);
       const st = document.getElementById('writingStatus');
       if (st) st.textContent = '✓ Đã copy prompt + bài viết vào Clipboard! Dán vào ChatGPT/Gemini web để chấm miễn phí.';
@@ -633,12 +764,85 @@ function bindEvents() {
 
   // Modals
   const settingsModal = document.getElementById('settingsModal')!;
-  document.getElementById('openSettingsBtn')!.onclick = () => settingsModal.classList.add('open');
+  const openSettings = () => settingsModal.classList.add('open');
+  document.getElementById('openSettingsBtn')!.onclick = openSettings;
+  const bannerOpenSettingsBtn = document.getElementById('bannerOpenSettingsBtn');
+  if (bannerOpenSettingsBtn) bannerOpenSettingsBtn.onclick = openSettings;
   document.getElementById('closeSettingsBtn')!.onclick = () => settingsModal.classList.remove('open');
   document.getElementById('cancelSettingsBtn')!.onclick = () => settingsModal.classList.remove('open');
   settingsModal.onclick = (e) => {
     if (e.target === settingsModal) settingsModal.classList.remove('open');
   };
+
+  document.getElementById('openAiStudioBtn')!.onclick = () => openUrl('https://aistudio.google.com/apikey');
+
+  document.getElementById('toggleKeyVisBtn')!.onclick = () => {
+    const typed = (document.getElementById('setKey') as HTMLInputElement).value;
+    showApiKey = !showApiKey;
+    renderApp();
+    document.getElementById('settingsModal')!.classList.add('open');
+    (document.getElementById('setKey') as HTMLInputElement).value = typed;
+  };
+
+  const apiKeyFileInput = document.getElementById('apiKeyFileInput') as HTMLInputElement;
+  document.getElementById('loadKeyFileBtn')!.onclick = () => apiKeyFileInput.click();
+  apiKeyFileInput.onchange = async () => {
+    const file = apiKeyFileInput.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    const extracted = extractApiKeyFromText(text);
+    const keyInput = document.getElementById('setKey') as HTMLInputElement;
+    keyInput.value = extracted;
+    apiTestMsg = extracted
+      ? `✓ Đã nạp key từ file (${file.name}). Bấm [KIỂM TRA KẾT NỐI API] hoặc [LƯU CÀI ĐẶT].`
+      : '✕ Không tìm thấy API Key hợp lệ trong file.';
+    apiTestOk = Boolean(extracted);
+    renderApp();
+    document.getElementById('settingsModal')!.classList.add('open');
+    (document.getElementById('setKey') as HTMLInputElement).value = extracted;
+  };
+
+  document.getElementById('testApiBtn')!.onclick = async () => {
+    const typedKey = (document.getElementById('setKey') as HTMLInputElement).value.trim();
+    const modelVal = (document.getElementById('setModel') as HTMLSelectElement).value;
+    isTestingApi = true;
+    apiTestMsg = 'Đang kiểm tra kết nối tới Google Gemini API...';
+    apiTestOk = null;
+    renderApp();
+    document.getElementById('settingsModal')!.classList.add('open');
+    (document.getElementById('setKey') as HTMLInputElement).value = typedKey;
+    try {
+      const res = await invoke<ApiTestResult>('test_gemini_connection', {
+        apiKey: typedKey || null,
+        model: modelVal,
+      });
+      apiTestMsg = res.message;
+      apiTestOk = res.ok;
+    } catch (err) {
+      apiTestMsg = `✕ ${String(err)}`;
+      apiTestOk = false;
+    } finally {
+      isTestingApi = false;
+      renderApp();
+      document.getElementById('settingsModal')!.classList.add('open');
+      (document.getElementById('setKey') as HTMLInputElement).value = typedKey;
+    }
+  };
+
+  document.getElementById('clearKeyBtn')!.onclick = async () => {
+    await invoke('clear_gemini_api_key');
+    dash = await invoke<DashboardState>('get_dashboard');
+    apiTestMsg = '✓ Đã xóa Gemini API Key khỏi SQLite.';
+    apiTestOk = true;
+    renderApp();
+    document.getElementById('settingsModal')!.classList.add('open');
+  };
+
+  document.getElementById('settingsToRoadmapBtn')!.onclick = () => {
+    settingsModal.classList.remove('open');
+    document.getElementById('roadmapModal')!.classList.add('open');
+  };
+
   document.getElementById('saveSettingsBtn')!.onclick = async () => {
     const keyVal = (document.getElementById('setKey') as HTMLInputElement).value.trim();
     const modelVal = (document.getElementById('setModel') as HTMLSelectElement).value;
@@ -655,6 +859,107 @@ function bindEvents() {
     dash = await invoke<DashboardState>('get_dashboard');
     settingsModal.classList.remove('open');
     renderApp();
+  };
+
+  // Roadmap Import Modal
+  const roadmapModal = document.getElementById('roadmapModal')!;
+  const openRoadmapBtn = document.getElementById('openRoadmapModalBtn');
+  if (openRoadmapBtn) openRoadmapBtn.onclick = () => roadmapModal.classList.add('open');
+  document.getElementById('closeRoadmapBtn')!.onclick = () => roadmapModal.classList.remove('open');
+  document.getElementById('cancelRoadmapBtn')!.onclick = () => roadmapModal.classList.remove('open');
+  roadmapModal.onclick = (e) => {
+    if (e.target === roadmapModal) roadmapModal.classList.remove('open');
+  };
+
+  const roadmapMdInput = document.getElementById('roadmapMdInput') as HTMLTextAreaElement;
+  roadmapMdInput.oninput = () => {
+    roadmapDraftMd = roadmapMdInput.value;
+  };
+
+  document.getElementById('copyRoadmapPromptBtn')!.onclick = async () => {
+    const promptText = await invoke<string>('get_roadmap_prompt');
+    await navigator.clipboard.writeText(promptText);
+    roadmapStatusMsg = '✓ Đã copy! Dán vào ChatGPT/Claude/Gemini để tạo lo-trinh.md';
+    roadmapStatusOk = true;
+    renderApp();
+    document.getElementById('roadmapModal')!.classList.add('open');
+  };
+
+  document.getElementById('loadSampleRoadmapBtn')!.onclick = async () => {
+    roadmapDraftMd = await invoke<string>('get_sample_roadmap_md');
+    roadmapPreview = await invoke<RoadmapPreview>('preview_roadmap_md', { markdown: roadmapDraftMd });
+    roadmapStatusMsg = '✓ Đã điền mẫu chuẩn XD4T-1ELTS & phân tích sẵn.';
+    roadmapStatusOk = true;
+    renderApp();
+    document.getElementById('roadmapModal')!.classList.add('open');
+  };
+
+  document.getElementById('exportCurrentRoadmapBtn')!.onclick = async () => {
+    roadmapDraftMd = await invoke<string>('export_current_roadmap_md');
+    roadmapPreview = await invoke<RoadmapPreview>('preview_roadmap_md', { markdown: roadmapDraftMd });
+    roadmapStatusMsg = '✓ Đã xuất lộ trình hiện tại ra khung Markdown.';
+    roadmapStatusOk = true;
+    renderApp();
+    document.getElementById('roadmapModal')!.classList.add('open');
+  };
+
+  const roadmapFileInput = document.getElementById('roadmapFileInput') as HTMLInputElement;
+  document.getElementById('pickRoadmapFileBtn')!.onclick = () => roadmapFileInput.click();
+  roadmapFileInput.onchange = async () => {
+    const file = roadmapFileInput.files?.[0];
+    if (!file) return;
+    roadmapDraftMd = await file.text();
+    try {
+      roadmapPreview = await invoke<RoadmapPreview>('preview_roadmap_md', { markdown: roadmapDraftMd });
+      roadmapStatusMsg = `✓ Đã đọc file ${file.name} (${roadmapPreview.weeks_count} tuần).`;
+      roadmapStatusOk = true;
+    } catch (err) {
+      roadmapPreview = null;
+      roadmapStatusMsg = `✕ ${String(err)}`;
+      roadmapStatusOk = false;
+    }
+    renderApp();
+    document.getElementById('roadmapModal')!.classList.add('open');
+  };
+
+  document.getElementById('previewRoadmapBtn')!.onclick = async () => {
+    roadmapDraftMd = roadmapMdInput.value;
+    try {
+      roadmapPreview = await invoke<RoadmapPreview>('preview_roadmap_md', { markdown: roadmapDraftMd });
+      roadmapStatusMsg = '✓ Phân tích thành công! Kiểm tra bảng xem trước rồi bấm [ÁP DỤNG LỘ TRÌNH NGAY].';
+      roadmapStatusOk = true;
+    } catch (err) {
+      roadmapPreview = null;
+      roadmapStatusMsg = `✕ ${String(err)}`;
+      roadmapStatusOk = false;
+    }
+    renderApp();
+    document.getElementById('roadmapModal')!.classList.add('open');
+  };
+
+  document.getElementById('applyRoadmapBtn')!.onclick = async () => {
+    roadmapDraftMd = roadmapMdInput.value;
+    const replaceExisting = (document.getElementById('chkReplaceRoadmap') as HTMLInputElement).checked;
+    const mergeVocabErrors = (document.getElementById('chkMergeVocabErrors') as HTMLInputElement).checked;
+    try {
+      dash = await invoke<DashboardState>('import_roadmap_md', {
+        markdown: roadmapDraftMd,
+        replaceExisting,
+        mergeVocabErrors,
+      });
+      dueCards = await invoke<VocabCard[]>('get_due_vocab');
+      cardIdx = 0;
+      cardFlipped = false;
+      roadmapStatusMsg = '✓ Đã áp dụng lộ trình mới!';
+      roadmapStatusOk = true;
+      roadmapModal.classList.remove('open');
+      renderApp();
+    } catch (err) {
+      roadmapStatusMsg = `✕ ${String(err)}`;
+      roadmapStatusOk = false;
+      renderApp();
+      document.getElementById('roadmapModal')!.classList.add('open');
+    }
   };
 
   const scoreModal = document.getElementById('scoreModal')!;
