@@ -533,7 +533,7 @@ namespace XD4TIeltsBar
             var candidates = new List<string>
             {
                 Path.Combine(baseDir, "xd4t-ielts65.exe"),
-                Path.Combine(localAppData, "XD4T-1ElLTS", "xd4t-ielts65.exe"),
+                Path.Combine(localAppData, "XD4T-1ELTS", "xd4t-ielts65.exe"),
                 Path.Combine(localAppData, "Programs", "XD4T IELTS 6.5", "xd4t-ielts65.exe"),
                 Path.Combine(programFiles, "XD4T IELTS 6.5", "xd4t-ielts65.exe"),
                 Path.GetFullPath(Path.Combine(baseDir, "..", "src-tauri", "target", "release", "xd4t-ielts65.exe")),

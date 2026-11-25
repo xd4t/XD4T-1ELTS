@@ -7,7 +7,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
-$installDir = Join-Path $env:LOCALAPPDATA "XD4T-1ElLTS"
+$installDir = Join-Path $env:LOCALAPPDATA "XD4T-1ELTS"
 
 Write-Host "=== XD4T // IELTS 6.5 - 1-Click Installer ===" -ForegroundColor Cyan
 
@@ -62,7 +62,7 @@ if (-not $appSrc) {
         }
     }
     if (-not $appSrc) {
-        throw "xd4t-ielts65.exe not found. Download XD4T-1ElLTS-v*-win-x64.zip from GitHub Releases, extract it, and run install.ps1."
+        throw "xd4t-ielts65.exe not found. Download XD4T-1ELTS-v*-win-x64.zip from GitHub Releases, extract it, and run install.ps1."
     }
 }
 
@@ -81,7 +81,7 @@ if (-not $NoWidget) {
 }
 Start-Sleep -Milliseconds 350
 
-# 4. Copy binaries to %LOCALAPPDATA%\XD4T-1ElLTS\
+# 4. Copy binaries to %LOCALAPPDATA%\XD4T-1ELTS\
 New-Item -ItemType Directory -Path $installDir -Force | Out-Null
 $appDst = Join-Path $installDir "xd4t-ielts65.exe"
 Copy-Item -LiteralPath $appSrc -Destination $appDst -Force

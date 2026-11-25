@@ -1,4 +1,4 @@
-# XD4T // IELTS 6.5 (`XD4T-1ElLTS`)
+# XD4T // IELTS 6.5 (`XD4T-1ELTS`)
 
 Ứng dụng desktop siêu nhẹ dành cho Windows 11 giúp luyện **IELTS Band 6.5+** mỗi ngày trong 30 phút — thiết kế tối giản **Monochrome Đen/Trắng**, lưu trữ 100% cục bộ bằng **SQLite**, tích hợp **AI chấm Writing 4 tiêu chí** và **Widget Taskbar Windows 11** tự né nút Thời tiết.
 
@@ -48,7 +48,7 @@
 
 Không cần cài Rust hay Node.js:
 
-1. Tải **`XD4T-1ElLTS-v1.0.0-win-x64.zip`** từ trang [**GitHub Releases**](../../releases) và giải nén.
+1. Tải **`XD4T-1ELTS-v1.0.0-win-x64.zip`** từ trang [**GitHub Releases**](../../releases) và giải nén.
 2. Mở PowerShell tại thư mục vừa giải nén và chạy:
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\install.ps1

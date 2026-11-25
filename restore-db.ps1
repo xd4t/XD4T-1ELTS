@@ -34,7 +34,7 @@ foreach ($suf in @("-wal", "-shm")) {
 Write-Host "[restore] Restored database -> $dbPath" -ForegroundColor Green
 
 $appCandidates = @(
-    (Join-Path $env:LOCALAPPDATA "XD4T-1ElLTS\xd4t-ielts65.exe"),
+    (Join-Path $env:LOCALAPPDATA "XD4T-1ELTS\xd4t-ielts65.exe"),
     (Join-Path $PSScriptRoot "xd4t-ielts65.exe"),
     (Join-Path $PSScriptRoot "src-tauri\target\release\xd4t-ielts65.exe")
 )

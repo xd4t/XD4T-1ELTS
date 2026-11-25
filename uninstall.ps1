@@ -4,7 +4,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$installDir = Join-Path $env:LOCALAPPDATA "XD4T-1ElLTS"
+$installDir = Join-Path $env:LOCALAPPDATA "XD4T-1ELTS"
 $dataDir = Join-Path $env:APPDATA "xd4t-ielts65"
 
 Get-Process -Name "xd4t-ielts65" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
