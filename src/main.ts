@@ -3,15 +3,25 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import pkg from '../package.json';
 import donateQrUrl from './assets/donate-qr.png';
 import {
   computeWordDiff,
   esc,
   evaluateErrorFixAnswer,
+  extractDictationErrorPairs,
+  highlightWordInExample,
   initTtsVoices,
   isTtsSupported,
+  makeCardClozeHtml,
   speakText,
 } from './diff';
+import {
+  parseChartSpec,
+  renderChartInnerHtml,
+  renderTask1VisualHtml,
+  summarizeChartSpecForPrompt,
+} from './charts';
 import type {
   ApiTestResult,
   BackupResultDto,
@@ -19,8 +29,10 @@ import type {
   DictationResultInput,
   DictationSentence,
   DictationSubmitResult,
+  ErrorDrillQuestion,
+  ErrorDrillResultInput,
+  ErrorDrillSubmitResult,
   ErrorFixAiGrade,
-  ErrorFixQuestion,
   GradeResponseDto,
   GradeResult,
   MicroCheckAnswerInput,
@@ -29,6 +41,7 @@ import type {
   QuizAnswerInput,
   QuizQuestion,
   QuizSubmitResult,
+  RefillPackResult,
   RestoreResultDto,
   RoadmapPreview,
   SpeakingCue,
@@ -37,6 +50,22 @@ import type {
   WidgetRuntimeInfo,
   WritingPrompt,
 } from './types';
+
+const APP_VERSION = pkg.version;
+const IELTS_TOPICS = [
+  'Environment',
+  'Technology & AI',
+  'Education',
+  'Health',
+  'Economy',
+  'Urbanization',
+  'Media',
+  'Crime & Law',
+  'Work',
+  'Culture',
+  'Transport',
+  'Globalization',
+];
 
 type ThemeId = 'pastel-male' | 'pastel-female' | 'mono-dark' | 'mono-light';
 
@@ -155,13 +184,25 @@ type ErrorFixFeedbackState = {
   aiError?: string;
 };
 
-// Error Fix Quiz State
-let errorFixQuestions: ErrorFixQuestion[] = [];
-let errorFixIdx = 0;
-let errorFixInput = '';
-let errorFixFeedback: ErrorFixFeedbackState | null = null;
-let errorFixCorrectCount = 0;
-let errorFixDone = false;
+// Error-Driven Mastery Drill State
+let errorDrillBatch: ErrorDrillQuestion[] = [];
+let errorDrillIdx = 0;
+let errorDrillInput = '';
+let errorDrillAnswers: ErrorDrillResultInput[] = [];
+let errorDrillFeedback: (ErrorFixFeedbackState & {
+  selectedOpt?: string;
+  rationaleVi: string;
+  streakAfter?: number;
+  masteredNow?: boolean;
+}) | null = null;
+let errorDrillSummary: ErrorDrillSubmitResult | null = null;
+let errorDrillLoading = false;
+
+// Flashcard safety & Undo state
+let confirmDeleteCardId: number | null = null;
+let confirmDeleteTimer: number | null = null;
+let undoHideCard: { id: number; word: string } | null = null;
+let undoHideTimer: number | null = null;
 
 // Micro-Check State
 let microQuestions: MicroCheckItem[] = [];
@@ -176,6 +217,7 @@ let microFeedback: (ErrorFixFeedbackState & {
 let microSummary: MicroCheckSubmitResult | null = null;
 let microSecsLeft = 120;
 let microTimer: number | null = null;
+let microTimeExpired = false;
 
 // Dictation State
 let dictationBatch: DictationSentence[] = [];
@@ -183,7 +225,14 @@ let dictationIdx = 0;
 let dictationRate = 0.85;
 let dictationInput = '';
 let dictationHintWords = 0;
-let dictationChecked: { pct: number; tokensHtml: string; wrongWords: string[]; pushed: boolean } | null = null;
+let dictationAutoPlay = true;
+let dictationChecked: {
+  pct: number;
+  tokensHtml: string;
+  wrongWords: string[];
+  pairs: { wrong: string; right: string }[];
+  pushed: boolean;
+} | null = null;
 let dictationResults: DictationResultInput[] = [];
 let dictationSummary: DictationSubmitResult | null = null;
 
@@ -232,6 +281,8 @@ let mediaRecorder: MediaRecorder | null = null;
 let mediaStream: MediaStream | null = null;
 let currentChunks: BlobPart[] = [];
 let recordedBlobs: { stageName: string; blob: Blob; url: string }[] = [];
+let selectedClipIdx = 0;
+let speakingHistoryOpen = false;
 let studioPlaybackAudio: HTMLAudioElement | null = null;
 let isGradingSpeaking = false;
 let speakingGradeOut: SpeakingGradeResponse | null = null;
@@ -245,6 +296,18 @@ let manualBandGra = '5.5';
 let manualBandP = '6.0';
 let manualNote = '';
 let manualTranscript = '';
+
+let aiPackOpen = false;
+let aiPackTopic = 'Environment';
+let aiPackLoading = false;
+let aiPackResult: RefillPackResult | null = null;
+let aiPackError = '';
+let shortcutsModalOpen = false;
+let generatingAiDrillErrId: number | null = null;
+let autoRefillTriggeredThisSession = false;
+let autoRefillToastMsg = '';
+let chartZoomOpen = false;
+let customTask1ImageDataUrl = '';
 
 let lastSyncedWindowTitle = '';
 let showApiKey = false;
@@ -339,27 +402,6 @@ function renderClozeHtml(sentence: string): string {
   return esc(sentence).replace('________', '<span class="quiz-blank">________</span>');
 }
 
-function makeCardClozeHtml(card: VocabCard): string {
-  const ex = card.example;
-  const w = card.word.split('(')[0].split('/')[0].trim();
-  if (w && ex.toLowerCase().includes(w.toLowerCase())) {
-    const idx = ex.toLowerCase().indexOf(w.toLowerCase());
-    const before = esc(ex.slice(0, idx));
-    const after = esc(ex.slice(idx + w.length));
-    return `${before}<span class="fc-blank">&nbsp;</span>${after}`;
-  }
-  return `${esc(ex)} <div class="small muted" style="margin-top:4px;">(Nghĩa: ${esc(card.meaning)})</div>`;
-}
-
-function highlightWordInExample(example: string, word: string): string {
-  const w = word.split('(')[0].split('/')[0].trim();
-  if (w && example.toLowerCase().includes(w.toLowerCase())) {
-    const idx = example.toLowerCase().indexOf(w.toLowerCase());
-    return `${esc(example.slice(0, idx))}<mark>${esc(example.slice(idx, idx + w.length))}</mark>${esc(example.slice(idx + w.length))}`;
-  }
-  return esc(example);
-}
-
 function questTargetFromHint(hint: string, title: string): string {
   switch (hint) {
     case 'srs':
@@ -367,7 +409,7 @@ function questTargetFromHint(hint: string, title: string): string {
     case 'micro_check':
       return 'vocab:quiz:micro';
     case 'quiz':
-      return 'vocab:quiz:fix';
+      return 'vocab:quiz:vocab';
     case 'dictation':
       return 'vocab:dict';
     case 'speaking':
@@ -383,7 +425,7 @@ function questTargetFromHint(hint: string, title: string): string {
       if (low.includes('nói') || low.includes('speaking')) return 'speak';
       if (low.includes('nghe chép') || low.includes('dictation')) return 'vocab:dict';
       if (low.includes('micro')) return 'vocab:quiz:micro';
-      if (low.includes('quiz')) return 'vocab:quiz:fix';
+      if (low.includes('quiz')) return 'vocab:quiz:vocab';
       if (low.includes('writing') || low.includes('viết')) return 'writing';
       if (low.includes('paraphrase')) return 'roadmap:para';
       if (low.includes('study4')) return 'study4';
@@ -420,6 +462,7 @@ function revokeRecordedBlobs(): void {
     }
   }
   recordedBlobs = [];
+  selectedClipIdx = 0;
 }
 
 function stopMediaRecorderIfActive(): void {
@@ -475,8 +518,10 @@ async function startRecordingForStage(stageName: string): Promise<void> {
         const blob = new Blob(currentChunks, { type: mime });
         const url = URL.createObjectURL(blob);
         recordedBlobs.push({ stageName, blob, url });
+        selectedClipIdx = recordedBlobs.length - 1;
       }
       currentChunks = [];
+      renderApp();
     };
     mediaRecorder.start(500);
   } catch (err) {
@@ -510,6 +555,8 @@ async function loadSpeakingCue(randomNext = false): Promise<void> {
 }
 
 async function openSpeakingStudio(): Promise<void> {
+  stopMicroTimer();
+  window.speechSynthesis?.cancel();
   studioOpen = true;
   speakingGradeOut = null;
   speakingStatusMsg = '';
@@ -521,7 +568,80 @@ async function openSpeakingStudio(): Promise<void> {
   renderApp();
 }
 
+function closeSpeakingStudio(): void {
+  if (studioRunning) {
+    stopStudioTimer();
+    studioRunning = false;
+    finishCurrentRecordingClip();
+  }
+  stopMediaRecorderIfActive();
+  studioPlaybackAudio?.pause();
+  studioPlaybackAudio = null;
+  revokeRecordedBlobs();
+  studioOpen = false;
+  renderApp();
+}
+
+function validateSpeakingCustomCue(): boolean {
+  if (studioSource === 'custom' && !customCueTitle.trim()) {
+    speakingStatusMsg = '✕ Vui lòng nhập đề Cue Card Part 2 vào ô "Đề của tôi" trước.';
+    speakingStatusErr = true;
+    renderApp();
+    document.getElementById('customCueIn')?.focus();
+    return false;
+  }
+  return true;
+}
+
+async function switchStudyLevel(level: string): Promise<void> {
+  stopMicroTimer();
+  window.speechSynthesis?.cancel();
+  dash = await invoke<DashboardState>('set_study_level', { level });
+  dictationBatch = [];
+  dictationIdx = 0;
+  dictationInput = '';
+  dictationHintWords = 0;
+  dictationChecked = null;
+  dictationResults = [];
+  dictationSummary = null;
+  studioCue = null;
+  speakingGradeOut = null;
+  errorDrillBatch = [];
+  errorDrillIdx = 0;
+  errorDrillInput = '';
+  errorDrillAnswers = [];
+  errorDrillFeedback = null;
+  errorDrillSummary = null;
+  microQuestions = [];
+  microIdx = 0;
+  microAnswers = [];
+  microInput = '';
+  microFeedback = null;
+  microSummary = null;
+  microTimeExpired = false;
+  lastGrade = null;
+  lastEndpoint = '';
+  const matchPrompt = dash.prompts.find((p) => p.mode === writingMode) || dash.prompts[0];
+  if (matchPrompt) {
+    writingMode = matchPrompt.mode;
+    selectedPromptId = matchPrompt.id;
+  }
+  dueCards = await invoke<VocabCard[]>('get_due_vocab', { onlyLeech: onlyLeechFilter });
+  cardIdx = 0;
+  cardFlipped = false;
+}
+
+function openAiPackModal(): void {
+  const weekIdx = dash ? (Math.max(1, dash.current_week) - 1) % IELTS_TOPICS.length : 0;
+  aiPackTopic = IELTS_TOPICS[weekIdx];
+  aiPackResult = null;
+  aiPackError = '';
+  aiPackOpen = true;
+  renderApp();
+}
+
 async function goToTarget(target: string): Promise<void> {
+  stopMicroTimer();
   if (target === 'study4') {
     void openUrl('https://study4.com/tests/ielts/');
     return;
@@ -557,7 +677,7 @@ async function goToTarget(target: string): Promise<void> {
       vocabSubMode = 'quiz';
       if (m === 'fix') {
         quizPillMode = 'fix';
-        await loadErrorFixQuiz();
+        await loadErrorDrills();
       } else if (m === 'micro') {
         quizPillMode = 'micro';
         await startMicroCheck();
@@ -578,13 +698,29 @@ async function goToTarget(target: string): Promise<void> {
   }
 }
 
-async function loadErrorFixQuiz(): Promise<void> {
-  errorFixQuestions = await invoke<ErrorFixQuestion[]>('generate_error_fix_quiz', { count: 5 });
-  errorFixIdx = 0;
-  errorFixInput = '';
-  errorFixFeedback = null;
-  errorFixCorrectCount = 0;
-  errorFixDone = false;
+async function loadErrorDrills(): Promise<void> {
+  errorDrillLoading = true;
+  renderApp();
+  try {
+    errorDrillBatch = await invoke<ErrorDrillQuestion[]>('generate_error_drills', { count: 5 });
+    errorDrillIdx = 0;
+    errorDrillInput = '';
+    errorDrillAnswers = [];
+    errorDrillFeedback = null;
+    errorDrillSummary = null;
+  } finally {
+    errorDrillLoading = false;
+  }
+}
+
+async function finishMicroEarly(): Promise<void> {
+  stopMicroTimer();
+  microTimeExpired = false;
+  microSummary = await invoke<MicroCheckSubmitResult>('submit_micro_check', { results: microAnswers });
+  dash = await invoke<DashboardState>('get_dashboard');
+  dueCards = await invoke<VocabCard[]>('get_due_vocab', { onlyLeech: onlyLeechFilter });
+  microFeedback = null;
+  renderApp();
 }
 
 async function startMicroCheck(): Promise<void> {
@@ -596,13 +732,29 @@ async function startMicroCheck(): Promise<void> {
   microFeedback = null;
   microSummary = null;
   microSecsLeft = 120;
+  microTimeExpired = false;
   microTimer = window.setInterval(() => {
-    if (microSecsLeft > 0) {
+    if (microSecsLeft > 1) {
       microSecsLeft -= 1;
       const el = document.getElementById('microTimerDisplay');
       if (el) el.textContent = `⏱ ${fmtMMSS(microSecsLeft)}`;
     } else {
+      microSecsLeft = 0;
+      microTimeExpired = true;
       stopMicroTimer();
+      const el = document.getElementById('microTimerDisplay');
+      if (el) el.textContent = '⏱ 0:00';
+      const host = document.getElementById('microExpiredHost');
+      if (host) {
+        host.innerHTML = `
+          <div class="micro-expired-banner">
+            <span>⏱ <b>Hết 2 phút</b> — Bấm Xem kết quả hoặc làm nốt câu đang dở</span>
+            <button type="button" class="btn btn-sm btn-primary" id="microFinishEarlyBtn">Xem kết quả ngay →</button>
+          </div>`;
+        document.getElementById('microFinishEarlyBtn')?.addEventListener('click', () => {
+          void finishMicroEarly();
+        });
+      }
     }
   }, 1000);
 }
@@ -635,23 +787,38 @@ function renderFlashcardMode(curTheme: ThemeId): string {
 
     <div class="stage-wrap">
       ${
+        undoHideCard
+          ? `<div class="fc-undo-toast">
+              <span>🙈 Đã ẩn thẻ <b>“${esc(undoHideCard.word)}”</b> khỏi hàng đợi.</span>
+              <button type="button" class="btn btn-sm btn-primary" id="undoHideCardBtn">↺ Hoàn tác (Undo)</button>
+            </div>`
+          : ''
+      }
+      ${
         curCard
           ? `
         <div class="fc-card" data-theme-ref="${curTheme}">
           <div class="fc-corner">
-            ${
-              isLeech
-                ? `<span class="tag leech" title="Quên ≥ 3 lần">🔥 Từ cứng đầu · quên ${curCard.lapses} lần</span>`
-                : `<span class="tag soft">${esc(curCard.topic.toUpperCase())} · ${isAim80 ? 'BAND 8.0' : 'BAND 6.5'} · REPS ${curCard.reps}</span>`
-            }
-            <span class="row">
+            <span class="row" style="gap:6px;">
               ${
                 isLeech
-                  ? `<button type="button" class="btn btn-sm" id="openLeechFixBtn" style="border-color:var(--v16-leech);color:var(--v16-leech);font-weight:700;">✍️ Chữa từ này</button>`
+                  ? `<span class="tag leech" title="Quên ≥ 3 lần">🔥 Từ cứng đầu · quên ${curCard.lapses} lần</span>`
+                  : `<span class="tag soft">${esc(curCard.topic.toUpperCase())} · ${isAim80 ? 'BAND 8.0' : 'BAND 6.5'} · REPS ${curCard.reps}</span>`
+              }
+              ${curCard.source === 'ai_pack' ? `<span class="tag ai-pack">✨ Mới nạp</span>` : ''}
+            </span>
+            <span class="row" style="gap:6px;align-items:center;">
+              ${
+                isLeech
+                  ? `<button type="button" class="btn btn-sm" id="openLeechFixBtn" style="border-color:var(--v16-leech);color:var(--v16-leech);font-weight:700;">✍️ Chữa từ này <kbd>C</kbd></button>`
                   : ''
               }
-              <button type="button" class="btn ghost ibtn" id="hideVocabBtn" title="Ẩn thẻ khỏi hàng đợi">🙈</button>
-              <button type="button" class="btn ghost ibtn" id="deleteVocabBtn" title="Xóa thẻ">🗑</button>
+              <button type="button" class="btn ghost ibtn" id="hideVocabBtn" title="Ẩn thẻ khỏi hàng đợi (có Hoàn tác)">🙈</button>
+              <span class="fc-danger-zone">
+                <button type="button" class="btn ghost ibtn ${confirmDeleteCardId === curCard.id ? 'btn-danger-confirm' : ''}" id="deleteVocabBtn" title="${confirmDeleteCardId === curCard.id ? 'Bấm lại để xác nhận xóa vĩnh viễn' : 'Xóa thẻ'}">
+                  ${confirmDeleteCardId === curCard.id ? 'Xác nhận xóa?' : '🗑'}
+                </button>
+              </span>
             </span>
           </div>
 
@@ -661,7 +828,7 @@ function renderFlashcardMode(curTheme: ThemeId): string {
                 <div class="fc-ex">${makeCardClozeHtml(curCard)}</div>
                 ${
                   cardFlipped
-                    ? `<div class="fc-word-lg" style="margin-top:6px;">${esc(curCard.word)} ${ttsOk ? `<button type="button" class="btn ibtn" data-say="${esc(curCard.word)}" title="Đọc từ">🔊</button>` : ''}</div>
+                    ? `<div class="fc-word-lg" style="margin-top:6px;">${esc(curCard.word)} ${ttsOk ? `<button type="button" class="btn ibtn" data-say="${esc(curCard.word)}" title="Đọc từ [R]">🔊 <kbd>R</kbd></button>` : ''}</div>
                        <div class="small muted">${esc(curCard.meaning)}</div>`
                     : `<div class="small muted">Nhớ lại từ còn thiếu rồi bấm Lật thẻ <kbd>Space</kbd></div>`
                 }
@@ -670,7 +837,7 @@ function renderFlashcardMode(curTheme: ThemeId): string {
                 ? `
                   ${
                     ttsOk
-                      ? `<button type="button" class="btn btn-primary lg" id="listenReplayBtn" data-say="${esc(curCard.word)}">🔊 Nghe lại <kbd style="color:inherit;border-color:currentColor;">V</kbd></button>`
+                      ? `<button type="button" class="btn btn-primary lg" id="listenReplayBtn" data-say="${esc(curCard.word)}">🔊 Nghe lại <kbd style="color:inherit;border-color:currentColor;">R</kbd></button>`
                       : `<div class="small muted">Thiết bị chưa bật TTS — lật thẻ để xem chữ</div>`
                   }
                   <div class="${cardFlipped ? '' : 'masked'}">
@@ -679,21 +846,21 @@ function renderFlashcardMode(curTheme: ThemeId): string {
                   </div>
                   <div class="fc-ex ${cardFlipped ? '' : 'masked'}">
                     ${highlightWordInExample(curCard.example, curCard.word)}
-                    ${ttsOk && cardFlipped ? `<button type="button" class="btn ghost ibtn" data-say="${esc(curCard.example)}" title="Đọc câu">🔉</button>` : ''}
+                    ${ttsOk && cardFlipped ? `<button type="button" class="btn ghost ibtn" data-say="${esc(curCard.example)}" title="Đọc câu [E]">🔉 <kbd>E</kbd></button>` : ''}
                   </div>
                   ${!cardFlipped ? `<div class="small muted">Mặt chữ ẩn tới khi lật thẻ</div>` : ''}
                 `
                 : `
                   <div class="row" style="justify-content:center;">
                     <span class="fc-word-lg">${esc(curCard.word)}</span>
-                    ${ttsOk ? `<button type="button" class="btn ibtn" data-say="${esc(curCard.word)}" title="Đọc từ">🔊</button>` : ''}
+                    ${ttsOk ? `<button type="button" class="btn ibtn" data-say="${esc(curCard.word)}" title="Đọc từ [R]">🔊 <kbd>R</kbd></button>` : ''}
                   </div>
                   ${
                     cardFlipped
                       ? `<div style="font-weight:700;font-size:15px;">${esc(curCard.meaning)}</div>
                          <div class="fc-ex">
                            ${highlightWordInExample(curCard.example, curCard.word)}
-                           ${ttsOk ? `<button type="button" class="btn ghost ibtn" data-say="${esc(curCard.example)}" title="Đọc câu">🔉</button>` : ''}
+                           ${ttsOk ? `<button type="button" class="btn ghost ibtn" data-say="${esc(curCard.example)}" title="Đọc câu [E]">🔉 <kbd>E</kbd></button>` : ''}
                          </div>`
                       : `<div class="small muted">(Bấm Lật thẻ hoặc nhấn Space để xem nghĩa &amp; ví dụ)</div>`
                   }
@@ -793,56 +960,111 @@ function renderErrorFixFallbackBlock(
     }`;
 }
 
-function renderErrorFixQuiz(): string {
-  if (errorFixDone) {
-    const tot = errorFixQuestions.length || 1;
-    const pct = Math.round((errorFixCorrectCount / tot) * 100);
+function renderErrorDrillQuiz(): string {
+  if (errorDrillSummary) {
     return `
       <div class="stage-wrap box">
         <div class="quiz-summary-hero">
-          <div class="quiz-summary-score mono-num">${errorFixCorrectCount} / ${tot} · ${pct}%</div>
-          <div class="small muted">Đã hoàn thành luyện gõ sửa lỗi từ Sổ lỗi!</div>
+          <div class="quiz-summary-score mono-num">${errorDrillSummary.correct_count} / ${errorDrillSummary.total_questions} · ${errorDrillSummary.accuracy_pct}%</div>
+          <div class="small muted">
+            ✓ Đã cập nhật tiến độ trị lỗi thực chiến${errorDrillSummary.marked_quest_done ? ' · ✓ Đã tự động tick xong nhiệm vụ Quiz hôm nay!' : ''}
+          </div>
+          ${
+            errorDrillSummary.newly_mastered.length > 0
+              ? `<div class="tag mastered" style="margin-top:8px;">✅ Đã trị dứt điểm: ${errorDrillSummary.newly_mastered.map((c) => esc(c)).join(', ')}</div>`
+              : ''
+          }
         </div>
         <div style="text-align:center;">
-          <button type="button" class="btn btn-primary" id="restartErrFixBtn">LÀM LƯỢT SỬA LỖI MỚI →</button>
+          <button type="button" class="btn btn-primary" id="restartErrDrillBtn">LUYỆN LƯỢT LỖI MỚI → <kbd style="color:inherit;border-color:currentColor;">Enter</kbd></button>
         </div>
       </div>`;
   }
-  const q = errorFixQuestions[errorFixIdx];
+  const q = errorDrillBatch[errorDrillIdx];
   if (!q) {
     return `
       <div class="stage-wrap box" style="text-align:center;padding:24px;">
-        <div class="small muted" style="margin-bottom:10px;">Sẵn sàng luyện gõ sửa lại các lỗi hay mắc nhất trong Sổ lỗi.</div>
-        <button type="button" class="btn btn-primary" id="startErrFixBtn">BẮT ĐẦU QUIZ SỬA LỖI (5 CÂU) →</button>
+        <div class="small muted" style="margin-bottom:10px;">Luyện sửa lỗi thực chiến qua Trắc nghiệm IELTS, Mini-Case Reading/Listening/Speaking &amp; Điền từ tiếng Anh (đúng 3 lần khác ngữ cảnh → trị dứt điểm).</div>
+        <button type="button" class="btn btn-primary" id="startErrDrillBtn" ${errorDrillLoading ? 'disabled' : ''}>
+          ${errorDrillLoading ? 'ĐANG TẢI BÀI TẬP...' : 'BẮT ĐẦU LUYỆN LỖI SAI (5 CÂU) →'} <kbd style="color:inherit;border-color:currentColor;">Enter</kbd>
+        </button>
       </div>`;
   }
-  const tot = errorFixQuestions.length || 1;
-  const pct = Math.round(((errorFixIdx + (errorFixFeedback ? 1 : 0)) / tot) * 100);
+  const tot = errorDrillBatch.length || 1;
+  const pct = Math.round(((errorDrillIdx + (errorDrillFeedback ? 1 : 0)) / tot) * 100);
+  const modeLabel =
+    q.drill_mode === 'TYPING'
+      ? 'TYPING · ĐIỀN TỪ'
+      : q.drill_mode === 'MINI_CASE'
+        ? 'MINI-CASE · PHÒNG THI'
+        : 'GRAMMAR MCQ · 4 ĐÁP ÁN';
+
   return `
     <div class="stage-wrap box">
-      <div class="row small muted" style="justify-content:space-between;">
-        <span>Câu ${errorFixIdx + 1}/${tot} · <span class="src-badge">${esc(q.category)} · ${q.count} lần · ${esc(q.created_at)}</span></span>
+      <div class="row small muted" style="justify-content:space-between;flex-wrap:wrap;gap:6px;">
+        <span>Câu ${errorDrillIdx + 1}/${tot} · <span class="src-badge">${esc(q.category)}</span> · <span class="tag soft">${esc(q.context_tag)}</span></span>
+        <span class="row" style="gap:6px;">
+          <span class="quiz-type-badge">${modeLabel}</span>
+          <span class="tag ${q.status === 'mastered' ? 'mastered' : 'active-err'}">${q.status === 'mastered' ? '✅ Đã trị' : `🔴 Trị ${q.streak_distinct}/3`}</span>
+        </span>
       </div>
-      <div class="bar-track" style="margin:8px 0 12px;"><div class="bar-fill" style="width:${pct}%"></div></div>
-      <div class="label-uc">Cụm / câu bạn đã viết sai</div>
-      <div style="font-size:16px;margin:4px 0 12px;"><s style="color:var(--m-err);">${esc(q.wrong_text)}</s></div>
-      <div class="label-uc" style="margin-bottom:4px;">Gõ lại cụm / câu sửa chuẩn</div>
-      <textarea class="text-input" id="errFixInput" rows="2" style="width:100%;font-size:14px;" placeholder="Nhập cách sửa đúng..." ${errorFixFeedback ? 'disabled' : ''}>${esc(errorFixInput)}</textarea>
-      <div class="row" style="justify-content:space-between;margin-top:8px;flex-wrap:wrap;gap:8px;">
-        <span class="small muted">Gõ lại đúng câu/cụm đã sửa (nếu đáp án có nhiều lựa chọn như A/B, chỉ cần gõ 1 cách đúng).</span>
-        ${
-          !errorFixFeedback
-            ? `<button type="button" class="btn btn-primary" id="checkErrFixBtn">Kiểm tra <kbd style="color:inherit;border-color:currentColor;">Enter</kbd></button>`
-            : `<button type="button" class="btn btn-primary" id="nextErrFixBtn">${errorFixIdx + 1 >= tot ? 'Xem tổng kết →' : 'Câu tiếp →'}</button>`
-        }
-      </div>
+      <div class="bar-track" style="margin:8px 0 10px;"><div class="bar-fill" style="width:${pct}%"></div></div>
+      <div class="drill-stem-box">${q.drill_mode === 'TYPING' ? renderClozeHtml(q.stem) : esc(q.stem)}</div>
+
       ${
-        errorFixFeedback
-          ? `<div class="quiz-feedback ${errorFixFeedback.correct ? 'ok' : 'err'}">
+        q.drill_mode === 'TYPING'
+          ? `
+            <div class="quiz-typing-row">
+              <input type="text" class="quiz-typing-input" id="errDrillInput" placeholder="Gõ 1–2 từ tiếng Anh chuẩn..." value="${esc(errorDrillInput)}" ${errorDrillFeedback ? 'disabled' : ''} />
+              ${
+                !errorDrillFeedback
+                  ? `<button type="button" class="btn btn-primary" id="checkErrDrillBtn">Kiểm tra <kbd style="color:inherit;border-color:currentColor;">Enter</kbd></button>`
+                  : ''
+              }
+            </div>`
+          : `
+            <div class="quiz-options-grid">
+              ${q.options
+                .map((opt, i) => {
+                  let cls = 'quiz-opt-btn';
+                  if (errorDrillFeedback) {
+                    if (opt === q.answer) cls += ' correct';
+                    else if (errorDrillFeedback.selectedOpt === opt) cls += ' wrong';
+                  }
+                  return `<button type="button" class="${cls}" data-edrill-opt="${i}" ${errorDrillFeedback ? 'disabled' : ''}>
+                    <kbd>${i + 1}</kbd> ${String.fromCharCode(65 + i)}. ${esc(opt)}
+                  </button>`;
+                })
+                .join('')}
+            </div>`
+      }
+
+      ${
+        errorDrillFeedback
+          ? `<div class="quiz-feedback ${errorDrillFeedback.correct ? 'ok' : 'err'}" style="margin-top:10px;">
               <div>
-                <b>${errorFixFeedback.correct ? '✓ Chính xác!' : '✗ Chưa khớp hoàn toàn'}</b>${errorFixFeedback.matchReason ? ` <span class="small muted">(${esc(errorFixFeedback.matchReason)})</span>` : ''} — Đáp án chuẩn: <b>${esc(errorFixFeedback.target)}</b>
+                <b>${errorDrillFeedback.correct ? '✓ Chính xác!' : '✗ Chưa đúng'}</b>
+                ${errorDrillFeedback.matchReason ? ` <span class="small muted">(${esc(errorDrillFeedback.matchReason)})</span>` : ''}
+                — Đáp án: <b>${esc(errorDrillFeedback.target)}</b>
               </div>
-              ${renderErrorFixFallbackBlock(errorFixFeedback, 'errFixSelfAcceptBtn', 'errFixAiGradeBtn')}
+              ${errorDrillFeedback.rationaleVi ? `<div class="small" style="margin-top:4px;">💡 ${esc(errorDrillFeedback.rationaleVi)}</div>` : ''}
+              ${
+                errorDrillFeedback.masteredNow
+                  ? `<div class="tag mastered" style="margin-top:6px;">✅ Xuất sắc! Đã trị dứt điểm lỗi này (3 ngữ cảnh liên tiếp)!</div>`
+                  : typeof errorDrillFeedback.streakAfter === 'number'
+                    ? `<div class="small muted" style="margin-top:4px;">Tiến độ trị lỗi: <b>${errorDrillFeedback.streakAfter}/3</b> ngữ cảnh khác nhau</div>`
+                    : ''
+              }
+              ${
+                q.drill_mode === 'TYPING' && !errorDrillFeedback.correct
+                  ? renderErrorFixFallbackBlock(errorDrillFeedback, 'errDrillSelfAcceptBtn', 'errDrillAiGradeBtn')
+                  : ''
+              }
+              <div style="margin-top:10px;">
+                <button type="button" class="btn btn-primary" id="nextErrDrillBtn">
+                  ${errorDrillIdx + 1 >= tot ? 'Xem tổng kết →' : 'Câu tiếp →'} <kbd style="color:inherit;border-color:currentColor;">Enter</kbd>
+                </button>
+              </div>
             </div>`
           : ''
       }
@@ -858,7 +1080,7 @@ function renderMicroCheck(): string {
           <div class="small muted">✓ Đã hoàn thành Micro-Check 2 phút${microSummary.marked_quest_done ? ' · ✓ Đã tự động tick xong nhiệm vụ Micro-Check hôm nay!' : ''}</div>
         </div>
         <div style="text-align:center;">
-          <button type="button" class="btn btn-primary" id="restartMicroBtn">LÀM LẠI MICRO-CHECK MỚI →</button>
+          <button type="button" class="btn btn-primary" id="restartMicroBtn">LÀM LẠI MICRO-CHECK MỚI → <kbd style="color:inherit;border-color:currentColor;">Enter</kbd></button>
         </div>
       </div>`;
   }
@@ -867,7 +1089,7 @@ function renderMicroCheck(): string {
     return `
       <div class="stage-wrap box" style="text-align:center;padding:24px;">
         <div class="small muted" style="margin-bottom:10px;">Trộn nhanh 5 câu (2 từ dễ quên + 2 câu Sổ lỗi + 1 cặp Paraphrase) để rà trí nhớ trong 2 phút.</div>
-        <button type="button" class="btn btn-primary" id="startMicroBtn">⚡ BẮT ĐẦU MICRO-CHECK 5 CÂU (2P) →</button>
+        <button type="button" class="btn btn-primary" id="startMicroBtn">⚡ BẮT ĐẦU MICRO-CHECK 5 CÂU (2P) → <kbd style="color:inherit;border-color:currentColor;">Enter</kbd></button>
       </div>`;
   }
   const tot = microQuestions.length || 5;
@@ -879,6 +1101,16 @@ function renderMicroCheck(): string {
         <span id="microTimerDisplay" class="mono-num">⏱ ${fmtMMSS(microSecsLeft)}</span>
       </div>
       <div class="bar-track" style="margin:8px 0 12px;"><div class="bar-fill" style="width:${pct}%"></div></div>
+      <div id="microExpiredHost">
+        ${
+          microTimeExpired
+            ? `<div class="micro-expired-banner">
+                <span>⏱ <b>Hết 2 phút</b> — Bấm Xem kết quả hoặc làm nốt câu đang dở</span>
+                <button type="button" class="btn btn-sm btn-primary" id="microFinishEarlyBtn">Xem kết quả ngay →</button>
+              </div>`
+            : ''
+        }
+      </div>
       ${
         q.item_type === 'error_fix'
           ? `<div class="label-uc">Sửa cụm sai này</div>
@@ -892,7 +1124,7 @@ function renderMicroCheck(): string {
                 .map(
                   (opt, i) => `
                 <button type="button" class="quiz-opt-btn ${microFeedback ? (opt === q.answer_text ? 'correct' : '') : ''}" data-micro-opt="${i}" ${microFeedback ? 'disabled' : ''}>
-                  ${String.fromCharCode(65 + i)}. ${esc(opt)}
+                  <kbd>${i + 1}</kbd> ${String.fromCharCode(65 + i)}. ${esc(opt)}
                 </button>`
                 )
                 .join('')}
@@ -902,7 +1134,7 @@ function renderMicroCheck(): string {
              <div class="row" style="justify-content:flex-end;margin-top:8px;">
                ${
                  !microFeedback
-                   ? `<button type="button" class="btn btn-sm" id="microGiveUpBtn">❓ Quên / Xem đáp án</button>
+                   ? `<button type="button" class="btn btn-sm" id="microGiveUpBtn">❓ Quên / Xem đáp án <kbd>Ctrl+H</kbd></button>
                       <button type="button" class="btn btn-primary" id="microCheckBtn">Kiểm tra <kbd style="color:inherit;border-color:currentColor;">Enter</kbd></button>`
                    : ''
                }
@@ -918,7 +1150,7 @@ function renderMicroCheck(): string {
                   ? renderErrorFixFallbackBlock(microFeedback, 'microSelfAcceptBtn', 'microAiGradeBtn')
                   : ''
               }
-              <div style="margin-top:8px;"><button type="button" class="btn btn-primary btn-sm" id="microNextBtn">${microIdx + 1 >= tot ? 'Hoàn thành Micro-Check →' : 'Câu tiếp →'}</button></div>
+              <div style="margin-top:8px;"><button type="button" class="btn btn-primary btn-sm" id="microNextBtn">${microIdx + 1 >= tot ? 'Hoàn thành Micro-Check →' : 'Câu tiếp →'} <kbd style="color:inherit;border-color:currentColor;">Enter</kbd></button></div>
             </div>`
           : ''
       }
@@ -932,12 +1164,12 @@ function renderQuizBox(): string {
   const pillsHtml = `
     <div class="quizpills" role="group" aria-label="Chế độ Quiz">
       <button type="button" class="pill" aria-pressed="${quizPillMode === 'vocab'}" data-qpill="vocab">📝 Quiz Từ vựng</button>
-      <button type="button" class="pill" aria-pressed="${quizPillMode === 'fix'}" data-qpill="fix">🔧 Quiz Gõ Sửa Lỗi</button>
+      <button type="button" class="pill" aria-pressed="${quizPillMode === 'fix'}" data-qpill="fix">🔧 Luyện Lỗi Sai (Thực chiến)</button>
       <button type="button" class="pill" aria-pressed="${quizPillMode === 'micro'}" data-qpill="micro">⚡ Micro-Check 5 câu (2p)</button>
     </div>`;
 
   if (quizPillMode === 'fix') {
-    return `${pillsHtml}${renderErrorFixQuiz()}`;
+    return `${pillsHtml}${renderErrorDrillQuiz()}`;
   }
   if (quizPillMode === 'micro') {
     return `${pillsHtml}${renderMicroCheck()}`;
@@ -974,7 +1206,7 @@ function renderQuizBox(): string {
         ${quizErrorMsg ? `<div class="status-msg err" style="margin-bottom:10px;">${esc(quizErrorMsg)}</div>` : ''}
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
           <button class="btn btn-primary" id="startQuizBtn" ${quizLoading ? 'disabled' : ''}>
-            ${quizLoading ? 'ĐANG TẠO BÀI QUIZ...' : 'BẮT ĐẦU QUIZ 10 CÂU →'}
+            ${quizLoading ? 'ĐANG TẠO BÀI QUIZ...' : 'BẮT ĐẦU QUIZ 10 CÂU →'} <kbd style="color:inherit;border-color:currentColor;">Enter</kbd>
           </button>
           <span class="small muted">Từ nào sai hoặc bấm <b>Quên từ này</b> sẽ tăng số lần quên &amp; đẩy về đầu hàng đợi SRS.</span>
         </div>
@@ -1014,8 +1246,8 @@ function renderQuizBox(): string {
                     ${quizFeedback ? 'disabled' : ''} />
                   ${
                     !quizFeedback
-                      ? `<button class="btn btn-primary" id="quizCheckTypingBtn" type="button">KIỂM TRA (Enter)</button>
-                         <button class="btn" id="quizGiveUpBtn" type="button">❓ Quên từ này</button>`
+                      ? `<button class="btn btn-primary" id="quizCheckTypingBtn" type="button">KIỂM TRA <kbd style="color:inherit;border-color:currentColor;">Enter</kbd></button>
+                         <button class="btn" id="quizGiveUpBtn" type="button">❓ Quên từ này <kbd>Ctrl+H</kbd></button>`
                       : ''
                   }
                 </div>`
@@ -1028,13 +1260,13 @@ function renderQuizBox(): string {
                         if (opt === q.word) cls += ' correct';
                         else if (quizFeedback.selectedOpt === opt) cls += ' wrong';
                       }
-                      return `<button type="button" class="${cls}" data-quiz-opt="${i}" ${quizFeedback ? 'disabled' : ''}>${String.fromCharCode(65 + i)}. ${esc(opt)}</button>`;
+                      return `<button type="button" class="${cls}" data-quiz-opt="${i}" ${quizFeedback ? 'disabled' : ''}><kbd>${i + 1}</kbd> ${String.fromCharCode(65 + i)}. ${esc(opt)}</button>`;
                     })
                     .join('')}
                 </div>
                 ${
                   !quizFeedback
-                    ? `<div style="margin-top:10px;"><button class="btn btn-sm" id="quizGiveUpBtn" type="button">❓ Quên từ này (đẩy về SRS)</button></div>`
+                    ? `<div style="margin-top:10px;"><button class="btn btn-sm" id="quizGiveUpBtn" type="button">❓ Quên từ này (đẩy về SRS) <kbd>F</kbd></button></div>`
                     : ''
                 }`
           }
@@ -1145,8 +1377,9 @@ function renderDictationMode(): string {
         <button type="button" aria-pressed="${dictationRate === 1}" data-rate="1">1.0x</button>
         <button type="button" aria-pressed="${dictationRate === 1.15}" data-rate="1.15">1.15x</button>
       </div>
+      <button type="button" class="chip" id="dictAutoPlayChip" aria-pressed="${dictationAutoPlay}" title="Tự phát âm khi sang câu mới">🔊 Tự đọc câu mới</button>
       <span class="sp"></span>
-      <span class="small">Câu ${dictationIdx + 1} / ${tot} · ${esc(cur.section)} · <span class="tag soft">${esc(cur.trap_focus)}</span></span>
+      <span class="small">Câu ${dictationIdx + 1} / ${tot} · ${esc(cur.section)} · <span class="tag soft">${esc(cur.trap_focus)}</span> ${cur.source === 'ai_pack' ? '<span class="tag ai-pack">✨ Mới nạp</span>' : ''}</span>
     </div>
 
     <div class="stage-wrap box" style="display:grid;gap:12px;">
@@ -1160,33 +1393,33 @@ function renderDictationMode(): string {
       </div>
       ${hintPreview ? `<div class="small muted">${hintPreview}</div>` : ''}
       <div class="row" style="justify-content:flex-end;flex-wrap:wrap;">
-        <button type="button" class="btn" id="dictHintBtn">💡 Xem gợi ý 1 từ</button>
+        <button type="button" class="btn" id="dictHintBtn">💡 Xem gợi ý 1 từ <kbd>Ctrl+H</kbd></button>
         <button type="button" class="btn btn-primary" id="dictCheckBtn">Kiểm tra <kbd style="color:inherit;border-color:currentColor;">Enter</kbd></button>
       </div>
-      ${
-        dictationChecked
-          ? `
-        <div>
-          <div class="row" style="justify-content:space-between;margin-bottom:6px;">
-            <span class="label-uc">Kết quả từng từ</span>
-            <span><span class="dict-pct">${dictationChecked.pct}%</span> <span class="small muted">chính xác</span></span>
-          </div>
-          <div class="diff-box">${dictationChecked.tokensHtml}</div>
-          <div class="small muted" style="margin-top:6px;">Nghĩa: ${esc(cur.meaning_vi)}</div>
-          <div class="row" style="justify-content:space-between;margin-top:8px;flex-wrap:wrap;">
-            <span class="small muted"><span class="w-ok">xanh</span> = đúng · <span class="w-bad">gạch</span> = bạn gõ sai/thừa · <span class="w-fix">đỏ</span> = đáp án/thiếu</span>
-            <div class="row">
-              <button type="button" class="btn btn-sm" id="pushDictErrBtn" ${dictationChecked.pushed || !dictationChecked.wrongWords.length ? 'disabled' : ''}>
-                ${dictationChecked.pushed ? `✓ Đã đẩy ${dictationChecked.wrongWords.length} từ vào Sổ lỗi` : '+ Đẩy vào Sổ lỗi Listening'}
-              </button>
-              <button type="button" class="btn btn-sm btn-primary" id="dictNextBtn">
-                ${dictationIdx + 1 >= tot ? 'Hoàn thành & Lưu buổi nghe →' : 'Câu tiếp →'}
-              </button>
+        ${
+          dictationChecked
+            ? `
+          <div>
+            <div class="row" style="justify-content:space-between;margin-bottom:6px;">
+              <span class="label-uc">Kết quả từng từ</span>
+              <span><span class="dict-pct">${dictationChecked.pct}%</span> <span class="small muted">chính xác</span></span>
             </div>
-          </div>
-        </div>`
-          : ''
-      }
+            <div class="diff-box">${dictationChecked.tokensHtml}</div>
+            <div class="small muted" style="margin-top:6px;">Nghĩa: ${esc(cur.meaning_vi)}</div>
+            <div class="row" style="justify-content:space-between;margin-top:8px;flex-wrap:wrap;">
+              <span class="small muted"><span class="w-ok">xanh</span> = đúng · <span class="w-bad">gạch</span> = bạn gõ sai/thừa · <span class="w-fix">đỏ</span> = đáp án/thiếu</span>
+              <div class="row">
+                <button type="button" class="btn btn-sm" id="pushDictErrBtn" ${dictationChecked.pushed || !dictationChecked.pairs.length ? 'disabled' : ''}>
+                  ${dictationChecked.pushed ? `✓ Đã đẩy ${dictationChecked.pairs.length} lỗi + Drill` : '+ Đẩy vào Sổ lỗi Listening'} <kbd>Ctrl+L</kbd>
+                </button>
+                <button type="button" class="btn btn-sm btn-primary" id="dictNextBtn">
+                  ${dictationIdx + 1 >= tot ? 'Hoàn thành & Lưu buổi nghe →' : 'Câu tiếp →'} <kbd style="color:inherit;border-color:currentColor;">Enter</kbd>
+                </button>
+              </div>
+            </div>
+          </div>`
+            : ''
+        }
     </div>`;
 }
 
@@ -1288,18 +1521,39 @@ function renderSpeakingStudio(): string {
           <div class="bigtime" id="studioTimerDisplay">${fmtMMSS(studioSecsLeft)}</div>
 
           <div class="ctrls">
-            <button type="button" class="btn btn-primary" id="studioGoBtn">${studioRunning ? '⏸ Dừng' : '● Bắt đầu'}</button>
-            <button type="button" class="btn" id="studioNextStageBtn">⏭ Chặng sau</button>
+            <button type="button" class="btn btn-primary" id="studioGoBtn">${studioRunning ? '⏸ Dừng' : '● Bắt đầu'} <kbd style="color:inherit;border-color:currentColor;">Ctrl+Space</kbd></button>
+            <button type="button" class="btn" id="studioNextStageBtn">⏭ Chặng sau <kbd>Alt+N</kbd></button>
             <button type="button" class="btn" id="studioReplayBtn" ${recordedBlobs.length === 0 ? 'disabled' : ''}>▶ Nghe lại</button>
             <button type="button" class="btn" id="studioSaveAudioBtn" ${recordedBlobs.length === 0 ? 'disabled' : ''}>💾 Lưu file</button>
           </div>
+          ${
+            recordedBlobs.length >= 2
+              ? `<div class="clip-pills">
+                  ${recordedBlobs
+                    .map(
+                      (c, i) => `
+                    <button type="button" class="pill" aria-pressed="${selectedClipIdx === i}" data-pick-clip="${i}">
+                      Chặng ${i + 1}: ${esc(c.stageName)}
+                    </button>`
+                    )
+                    .join('')}
+                </div>`
+              : ''
+          }
 
           <div class="speak-score-box">
-            <div class="row" style="justify-content:space-between;flex-wrap:wrap;">
+            <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:6px;">
               <span class="label-uc">Chấm điểm Speaking</span>
-              <button type="button" class="btn btn-primary btn-sm" id="gradeSpeakingAiBtn" ${isGradingSpeaking ? 'disabled' : ''}>
-                ${isGradingSpeaking ? 'ĐANG CHẤM AUDIO...' : '✨ Chấm AI (Gemini Audio)'}
-              </button>
+              <span class="row" style="gap:6px;">
+                ${
+                  dash.speaking_sessions.length > 0
+                    ? `<button type="button" class="btn btn-sm" id="toggleSpeakHistoryBtn">📜 Lịch sử (${dash.speaking_sessions.length} phiên)</button>`
+                    : ''
+                }
+                <button type="button" class="btn btn-primary btn-sm" id="gradeSpeakingAiBtn" ${isGradingSpeaking ? 'disabled' : ''}>
+                  ${isGradingSpeaking ? 'ĐANG CHẤM AUDIO...' : '✨ Chấm AI (Gemini Audio)'} <kbd style="color:inherit;border-color:currentColor;">Ctrl+Enter</kbd>
+                </button>
+              </span>
             </div>
             ${speakingStatusMsg ? `<div class="status-msg ${speakingStatusErr ? 'err' : 'ok'}">${esc(speakingStatusMsg)}</div>` : ''}
             ${
@@ -1377,6 +1631,25 @@ function renderSpeakingStudio(): string {
               dash.speaking_sessions.length > 0
                 ? `<div class="small muted" style="margin-top:8px;padding-top:6px;border-top:1px solid var(--m-line);">
                     Gần nhất: <b>Band ${dash.speaking_sessions[0].overall_band.toFixed(1)}</b> · ${esc(dash.speaking_sessions[0].cue_title)} (${esc(dash.speaking_sessions[0].created_at)}) · Tổng ${dash.speaking_sessions.length} phiên
+                  </div>`
+                : ''
+            }
+            ${
+              speakingHistoryOpen && dash.speaking_sessions.length > 0
+                ? `<div class="speak-history-list">
+                    ${dash.speaking_sessions
+                      .map(
+                        (s) => `
+                      <div class="speak-history-item">
+                        <div class="row" style="justify-content:space-between;gap:6px;">
+                          <b>Band ${s.overall_band.toFixed(1)} <span class="muted" style="font-weight:400;">(FC ${s.fc_band.toFixed(1)} · LR ${s.lr_band.toFixed(1)} · GRA ${s.gra_band.toFixed(1)} · P ${s.p_band.toFixed(1)})</span></b>
+                          <span class="muted">${esc(s.created_at)}</span>
+                        </div>
+                        <div style="margin-top:2px;"><b>${esc(s.cue_title)}</b>${s.wpm_end > 0 ? ` · <span class="mono-num">${s.wpm_start}→${s.wpm_end} WPM</span>` : ''}</div>
+                        ${s.progress_note ? `<div class="muted" style="margin-top:2px;">${esc(s.progress_note)}</div>` : ''}
+                      </div>`
+                      )
+                      .join('')}
                   </div>`
                 : ''
             }
@@ -1458,7 +1731,9 @@ function renderApp() {
 
   const curPrompt = getCurrentPrompt();
   const modePrompts = dash.prompts.filter((p) => p.mode === writingMode);
-  const top3Errors = dash.error_logs.slice(0, 3);
+  const top3Errors = dash.error_logs
+    .filter((e) => e.category.toLowerCase().includes('writing'))
+    .slice(0, 3);
 
   const phaseNumbers = Array.from(new Set(dash.roadmap.map((r) => r.phase))).sort((a, b) => a - b);
   const pct = (arr: NonNullable<typeof dash>['roadmap']) =>
@@ -1496,6 +1771,14 @@ function renderApp() {
     <div class="content">
       <!-- TAB 1: TODAY -->
       <div class="panel ${activeTab === 'today' ? 'active' : ''}" id="tab-today">
+        ${
+          autoRefillToastMsg
+            ? `<div class="api-banner" role="status">
+                <span>${esc(autoRefillToastMsg)}</span>
+                <button class="btn btn-sm" id="dismissAutoRefillToastBtn" type="button">Đóng</button>
+              </div>`
+            : ''
+        }
         ${
           !dash.settings.has_api_key
             ? `<div class="api-banner">
@@ -1609,10 +1892,11 @@ function renderApp() {
             <div class="box">
               <div class="label-uc" style="margin-bottom:8px;">Quick Actions (1 chạm)</div>
               <div class="qa-grid">
-                <button type="button" class="btn" data-go="speak">🎙️ Phòng Luyện Nói</button>
+                <button type="button" class="btn" data-go="speak">🎙️ Phòng Luyện Nói <kbd>Alt+S</kbd></button>
                 <button type="button" class="btn" data-go="vocab:dict">🎧 Nghe chép câu</button>
                 <button type="button" class="btn" data-go="vocab:quiz:micro">⚡ Micro-Check 2p</button>
                 <button type="button" class="btn" data-go="writing">📝 Viết bài</button>
+                <button type="button" class="btn" id="openAiPackTab1Btn">✨ Nạp thêm bài (AI)</button>
               </div>
             </div>
           </div>
@@ -1631,14 +1915,14 @@ function renderApp() {
       <!-- TAB 2: WRITING + AI -->
       <div class="panel ${activeTab === 'writing' ? 'active' : ''}" id="tab-writing">
         ${
-          top3Errors.length >= 3
+          top3Errors.length > 0
             ? `
           <div class="top3-bar ${top3Collapsed ? 'collapsed' : ''}" id="top3Bar">
             <span>⚠️</span>
             <div class="top3-body">
               <div class="row">
-                <b class="small">Rà nhanh Top 3 lỗi bạn hay mắc trước khi viết</b>
-                <span class="small muted">· đếm từ Sổ lỗi</span>
+                <b class="small">Rà nhanh Top 3 lỗi Writing bạn hay mắc trước khi viết</b>
+                <span class="small muted">· lọc riêng Writing từ Sổ lỗi</span>
               </div>
               <ol>
                 ${top3Errors
@@ -1649,7 +1933,7 @@ function renderApp() {
                   .join('')}
               </ol>
             </div>
-            <button type="button" class="btn ghost ibtn" id="toggleTop3Btn" aria-expanded="${!top3Collapsed}" title="Thu gọn">${top3Collapsed ? '▾' : '▴'}</button>
+            <button type="button" class="btn ghost ibtn" id="toggleTop3Btn" aria-expanded="${!top3Collapsed}" title="Thu gọn [Alt+T]">${top3Collapsed ? '▾' : '▴'} <kbd>Alt+T</kbd></button>
           </div>`
             : ''
         }
@@ -1662,7 +1946,7 @@ function renderApp() {
             ${modePrompts
               .map(
                 (p) =>
-                  `<option value="${esc(p.id)}" ${curPrompt?.id === p.id ? 'selected' : ''}>${esc(p.title)}</option>`
+                  `<option value="${esc(p.id)}" ${curPrompt?.id === p.id ? 'selected' : ''}>${p.source === 'ai_pack' ? '✨ [Mới nạp] ' : ''}${esc(p.title)}</option>`
               )
               .join('')}
           </select>
@@ -1670,12 +1954,23 @@ function renderApp() {
         </div>
 
         <div class="grid-2">
-          <div class="box">
+          <div class="box ${writingMode === 'task1' || Boolean(curPrompt?.chart_spec_json) || Boolean(customTask1ImageDataUrl) ? 'writing-task1-active' : ''}">
             <div class="box-title">
-              <span>ĐỀ BÀI &amp; KHUNG VIẾT</span>
+              <span>ĐỀ BÀI &amp; KHUNG VIẾT ${curPrompt?.source === 'ai_pack' ? '<span class="tag ai-pack">✨ Mới nạp</span>' : ''}</span>
               <span id="wordCount">0 / ${curPrompt?.target_words || 90} từ</span>
             </div>
             <div class="prompt-box"><b>Đề:</b> ${esc(curPrompt?.prompt || '')}</div>
+            <input type="file" id="task1ImgInput" accept="image/*" style="display:none;" />
+            ${
+              writingMode === 'task1' || Boolean(curPrompt?.chart_spec_json) || Boolean(customTask1ImageDataUrl)
+                ? renderTask1VisualHtml(curPrompt?.chart_spec_json, customTask1ImageDataUrl)
+                : ''
+            }
+            ${
+              curPrompt?.target_vocab && curPrompt.target_vocab.length > 0
+                ? `<div class="target-vocab-row"><span class="muted">Từ mục tiêu:</span> ${curPrompt.target_vocab.map((v) => `<span class="tag soft">${esc(v)}</span>`).join('')}</div>`
+                : ''
+            }
             <div class="hint-box ${hintOpen ? 'open' : ''}" id="hintBox">${esc(curPrompt?.outline_hint || '')}</div>
             <textarea class="editor" id="essayInput" placeholder="Nhập bài viết tiếng Anh của bạn tại đây..."></textarea>
             ${
@@ -1694,8 +1989,8 @@ function renderApp() {
                 : ''
             }
             <div class="checklist-3m">
-              <div style="font-weight:700;color:var(--m-muted);margin-bottom:5px;text-transform:uppercase;">CHECKLIST SOÁT LỖI 3 PHÚT TRƯỚC KHI NỘP:</div>
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;">
+              <div style="font-weight:700;color:var(--m-muted);margin-bottom:4px;text-transform:uppercase;">CHECKLIST SOÁT LỖI 3 PHÚT TRƯỚC KHI NỘP:</div>
+              <div class="checklist-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;">
                 ${dash.settings.writing_checklist
                   .map(
                     (item, idx) =>
@@ -1705,8 +2000,11 @@ function renderApp() {
               </div>
             </div>
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:6px;flex-wrap:wrap;">
-              <button class="btn btn-sm" id="copyPromptBtn">COPY PROMPT CHẤM AI</button>
-              <button class="btn btn-primary" id="gradeBtn" ${isGrading ? 'disabled' : ''}>${isGrading ? 'ĐANG CHẤM AI...' : `CHẤM BAND ${isAim80 ? '8.0' : '6.5'} NGAY →`}</button>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                <button class="btn btn-sm" id="copyPromptBtn">COPY PROMPT CHẤM AI</button>
+                <button class="btn btn-sm" id="markWritingDoneBtn" title="Đánh dấu đã viết xong (cho người dùng Copy Prompt miễn phí)">✓ Đánh dấu đã viết (Copy Prompt)</button>
+              </div>
+              <button class="btn btn-primary" id="gradeBtn" ${isGrading ? 'disabled' : ''}>${isGrading ? 'ĐANG CHẤM AI...' : `CHẤM BAND ${isAim80 ? '8.0' : '6.5'} NGAY →`} <kbd style="color:inherit;border-color:currentColor;">Ctrl+Enter</kbd></button>
             </div>
             <div id="writingStatus" class="status-msg ${writingStatusErr ? 'err' : writingStatusMsg ? 'ok' : ''}" style="margin-top:6px;">${esc(writingStatusMsg)}</div>
           </div>
@@ -1755,12 +2053,13 @@ function renderApp() {
 
       <!-- TAB 3: TỪ VỰNG & NGHE -->
       <div class="panel ${activeTab === 'vocab' ? 'active' : ''}" id="tab-vocab">
-        <div class="row" style="margin-bottom:12px;flex-wrap:wrap;">
+        <div class="row" style="margin-bottom:12px;flex-wrap:wrap;justify-content:space-between;gap:8px;">
           <div class="seg" role="group" aria-label="Sub-mode Từ vựng và Nghe">
             <button type="button" aria-pressed="${vocabSubMode === 'flashcard'}" data-vsub="flashcard">📇 Flashcard</button>
             <button type="button" aria-pressed="${vocabSubMode === 'quiz'}" data-vsub="quiz">📝 Quiz &amp; Sửa lỗi ${dash.quiz_status.quiz_due ? '· ●' : ''}</button>
             <button type="button" aria-pressed="${vocabSubMode === 'dictation'}" data-vsub="dictation">🎧 Nghe chép câu</button>
           </div>
+          <button type="button" class="btn btn-sm" id="openAiPackTab3Btn">✨ Nạp thêm bài (AI)</button>
         </div>
         ${
           vocabSubMode === 'quiz'
@@ -1832,13 +2131,33 @@ function renderApp() {
               <div class="log-table-wrap">
                 <table class="log-table">
                   <thead>
-                    <tr><th>Nguồn / Loại</th><th>Hay mắc</th><th>Sửa chuẩn</th><th>Lần</th></tr>
+                    <tr><th>Nguồn / Loại</th><th>Hay mắc</th><th>Sửa chuẩn</th><th>Trạng thái trị lỗi</th><th>Lần</th></tr>
                   </thead>
                   <tbody>
                     ${dash.error_logs
                       .map(
                         (e) =>
-                          `<tr><td><span class="tag soft">${esc(e.category)}</span></td><td class="err-del">${esc(e.wrong_text)}</td><td class="ok-add">${esc(e.right_text)}</td><td>${e.count}</td></tr>`
+                          `<tr>
+                            <td>
+                              <span class="tag soft">${esc(e.category)}</span>
+                              <div class="small muted" style="margin-top:2px;">${esc(e.drill_mode)}</div>
+                            </td>
+                            <td class="err-del">${esc(e.wrong_text)}</td>
+                            <td class="ok-add">${esc(e.right_text)}</td>
+                            <td>
+                              ${
+                                e.status === 'mastered'
+                                  ? `<span class="tag mastered">✅ Đã trị dứt điểm</span>`
+                                  : `<span class="tag active-err">🔴 Đang trị · ${e.streak_distinct}/3</span>`
+                              }
+                              ${
+                                e.drill_count === 0
+                                  ? `<div style="margin-top:4px;"><button type="button" class="btn btn-sm" data-gen-err-drills="${e.id}" ${generatingAiDrillErrId === e.id ? 'disabled' : ''}>${generatingAiDrillErrId === e.id ? '⏳ Đang sinh...' : '✨ Sinh 3 bài tập AI'}</button></div>`
+                                  : ''
+                              }
+                            </td>
+                            <td>${e.count}</td>
+                          </tr>`
                       )
                       .join('')}
                   </tbody>
@@ -1869,7 +2188,7 @@ function renderApp() {
                       .map(
                         (p) => `
                       <tr>
-                        <td><b>${esc(p.question_term)}</b></td>
+                        <td><b>${esc(p.question_term)}</b> ${p.source === 'ai_pack' ? '<span class="tag ai-pack">✨ Mới nạp</span>' : ''}</td>
                         <td>${esc(p.passage_paraphrase)}</td>
                         <td class="small">${esc(p.source_type)}</td>
                         <td>
@@ -1896,10 +2215,93 @@ function renderApp() {
         <span class="dot-live"></span>
         <span><b>SYSTEM TRAY:</b> Chạy ngầm cùng Windows · Nhắc lúc ${esc(dash.settings.reminder_time)} nếu chưa học</span>
       </div>
-      <div style="color:var(--m-muted);">XD4T-1ELTS v1.6.0 · Rust + Tauri v2 + SQLite</div>
+      <div class="row" style="gap:10px;">
+        <button type="button" class="btn btn-sm" id="openShortcutsBtn">⌨️ Phím tắt <kbd>?</kbd></button>
+        <span style="color:var(--m-muted);">XD4T-1ELTS v${esc(APP_VERSION)} · Rust + Tauri v2 + SQLite</span>
+      </div>
     </div>
 
     ${renderSpeakingStudio()}
+
+    <!-- AI CONTENT PACK REFILL MODAL -->
+    <div class="modal-backdrop ${aiPackOpen ? 'open' : ''}" id="aiPackModal">
+      <div class="modal-box modal-wide">
+        <div class="box-title"><span>✨ NẠP GÓI CHỦ ĐỀ MỚI (GEMINI OFFLINE REFILL)</span><button class="btn btn-sm" id="closeAiPackBtn">✕</button></div>
+        <div class="small muted" style="margin-bottom:8px;">
+          Chỉ <b>1 HTTP Request duy nhất</b> nạp trọn <b>25 bài liên kết nhau</b> (+10 Collocations · +5 Dictation · +2 Đề Writing · +5 Paraphrase · +3 Luyện lỗi bám Top 3) cho Track <b>${isAim80 ? '8.0' : '6.5'}</b> để học offline mãi mãi.
+        </div>
+        ${
+          !dash.settings.has_api_key
+            ? `<div class="status-msg err" style="margin-bottom:10px;">
+                Gắn Gemini API Key miễn phí trong Cài đặt để nạp thêm bài không giới hạn (hiện app đã có sẵn 120 từ · 48 Dictation · 48 Speaking · 60 Luyện lỗi · 24 đề Writing offline!).
+                <div style="margin-top:6px;"><button type="button" class="btn btn-sm btn-primary" id="aiPackOpenSettingsBtn">Mở Cài đặt gắn Key →</button></div>
+              </div>`
+            : ''
+        }
+        <div class="label-uc">Chọn 1 trong 12 chủ đề IELTS (Gợi ý Tuần ${dash.current_week}: <b>${esc(IELTS_TOPICS[(Math.max(1, dash.current_week) - 1) % IELTS_TOPICS.length])}</b>)</div>
+        <div class="topic-chips-grid">
+          ${IELTS_TOPICS.map(
+            (tp) => `<button type="button" class="topic-chip ${aiPackTopic === tp ? 'active' : ''}" data-pick-topic="${esc(tp)}">${esc(tp)}</button>`
+          ).join('')}
+        </div>
+        <div class="form-row" style="margin-top:8px;">
+          <label>Hoặc nhập chủ đề tùy ý (VD: Space Exploration, Bioethics...)</label>
+          <input type="text" id="aiPackTopicIn" value="${esc(aiPackTopic)}" placeholder="Nhập chủ đề tiếng Anh..." />
+        </div>
+        ${aiPackError ? `<div class="status-msg err">${esc(aiPackError)}</div>` : ''}
+        ${
+          aiPackResult
+            ? `<div class="status-msg ok">
+                ✓ Đã nạp gói <b>${esc(aiPackResult.topic)}</b> (Track ${esc(aiPackResult.level)}):
+                <b>+${aiPackResult.vocab_added}</b> từ · <b>+${aiPackResult.dictations_added}</b> Dictation · <b>+${aiPackResult.prompts_added}</b> Writing · <b>+${aiPackResult.paraphrases_added}</b> Paraphrase · <b>+${aiPackResult.drills_added}</b> Luyện lỗi!
+              </div>`
+            : ''
+        }
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;">
+          <button type="button" class="btn" id="cancelAiPackBtn">ĐÓNG</button>
+          <button type="button" class="btn btn-primary" id="runAiPackBtn" ${aiPackLoading || !dash.settings.has_api_key ? 'disabled' : ''}>
+            ${aiPackLoading ? '⏳ ĐANG NẠP 25 BÀI TỪ GEMINI...' : '✨ Nạp gói 25 bài (1 request) →'}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- KEYBOARD CHEATSHEET OVERLAY -->
+    <div class="modal-backdrop ${shortcutsModalOpen ? 'open' : ''}" id="shortcutsModal">
+      <div class="modal-box modal-wide">
+        <div class="box-title"><span>⌨️ BẢNG PHÍM TẮT LIÊN TỤC (0 CHẠM CHUỘT)</span><button class="btn btn-sm" id="closeShortcutsBtn">✕</button></div>
+        <div class="kbd-grid">
+          <div class="kbd-section">
+            <div class="kbd-section-title">Toàn ứng dụng</div>
+            <div class="kbd-row"><span>Chuyển 4 tab chính</span><span><kbd>Alt+1..4</kbd></span></div>
+            <div class="kbd-row"><span>Mở / Đóng Phòng Luyện Nói</span><span><kbd>Alt+S</kbd></span></div>
+            <div class="kbd-row"><span>Bật / Tắt bảng phím tắt này</span><span><kbd>?</kbd></span></div>
+            <div class="kbd-row"><span>Đóng modal / drawer / bỏ focus</span><span><kbd>Esc</kbd></span></div>
+          </div>
+          <div class="kbd-section">
+            <div class="kbd-section-title">Flashcard SRS</div>
+            <div class="kbd-row"><span>Lật / Úp thẻ</span><span><kbd>Space</kbd> / <kbd>Enter</kbd></span></div>
+            <div class="kbd-row"><span>Chấm Quên / Khó / Nhớ / Dễ</span><span><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></span></div>
+            <div class="kbd-row"><span>Đọc từ / Đọc ví dụ</span><span><kbd>R</kbd> / <kbd>E</kbd></span></div>
+            <div class="kbd-row"><span>Chữa từ cứng đầu (Lưu: Ctrl+Enter)</span><span><kbd>C</kbd></span></div>
+          </div>
+          <div class="kbd-section">
+            <div class="kbd-section-title">Quiz, Luyện Lỗi &amp; Micro-Check</div>
+            <div class="kbd-row"><span>Chọn đáp án MCQ</span><span><kbd>1..4</kbd> / <kbd>A..D</kbd></span></div>
+            <div class="kbd-row"><span>Nhịp đôi: Chấm → Câu tiếp</span><span><kbd>Enter</kbd> → <kbd>Enter</kbd></span></div>
+            <div class="kbd-row"><span>Quên / Xem đáp án</span><span><kbd>F</kbd> / <kbd>Ctrl+H</kbd></span></div>
+            <div class="kbd-row"><span>Tự xác nhận đúng / AI chấm sửa</span><span><kbd>Ctrl+Y</kbd> / <kbd>Ctrl+I</kbd></span></div>
+          </div>
+          <div class="kbd-section">
+            <div class="kbd-section-title">Dictation, Writing &amp; Speaking</div>
+            <div class="kbd-row"><span>Nghe lại Dictation / Chạy Speaking</span><span><kbd>Ctrl+Space</kbd></span></div>
+            <div class="kbd-row"><span>Tốc độ Dictation 0.85x / 1.0x / 1.15x</span><span><kbd>Ctrl+1..3</kbd></span></div>
+            <div class="kbd-row"><span>Đẩy lỗi Listening / Sang chặng Nói</span><span><kbd>Ctrl+L</kbd> / <kbd>Alt+N</kbd></span></div>
+            <div class="kbd-row"><span>Chấm AI Writing/Speaking · Top 3</span><span><kbd>Ctrl+Enter</kbd> / <kbd>Alt+T</kbd></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- SETTINGS MODAL -->
     <div class="modal-backdrop" id="settingsModal">
@@ -1981,6 +2383,19 @@ function renderApp() {
           <input type="checkbox" id="setAutostart" style="width:auto;" ${dash.settings.autostart ? 'checked' : ''} />
           <label for="setAutostart" style="margin:0;cursor:pointer;">Tự khởi động cùng Windows</label>
         </div>
+        <div class="form-row">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <input type="checkbox" id="setAutoRefill" style="width:auto;" ${dash.settings.auto_refill_enabled !== false ? 'checked' : ''} />
+            <label for="setAutoRefill" style="margin:0;cursor:pointer;">Tự động nạp gói chủ đề AI hàng tuần (Chủ Nhật / đủ tiến độ học)</label>
+          </div>
+          <div class="small muted" style="margin-top:3px;">
+            ${
+              dash.auto_refill_status?.last_refill_at
+                ? `Lần nạp gần nhất: <b>${esc(dash.auto_refill_status.last_refill_at)}</b> · Chủ đề <b>${esc(dash.auto_refill_status.last_refill_topic || '—')}</b>`
+                : 'Chưa tự nạp lần nào (sẽ tự kích hoạt vào Chủ Nhật hoặc khi học đủ tiến độ nếu có API Key).'
+            }
+          </div>
+        </div>
         <details class="donate-details" id="settingsDonateDetails">
           <summary>☕ Thích app này? Ủng hộ tác giả (VietQR)</summary>
           <div class="donate-details-body">
@@ -1999,6 +2414,7 @@ function renderApp() {
 
         <div class="modal-sticky-footer">
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button class="btn btn-sm" id="settingsToAiPackBtn" type="button">✨ Nạp thêm bài (AI)</button>
             <button class="btn btn-sm" id="settingsToRoadmapBtn" type="button">+ NẠP LỘ TRÌNH .MD</button>
             <button class="btn btn-sm" id="reopenWelcomeBtn" type="button">Mở lại hướng dẫn bắt đầu</button>
           </div>
@@ -2089,6 +2505,26 @@ function renderApp() {
       </div>
     </div>
 
+    <!-- CHART ZOOM LIGHTBOX MODAL -->
+    <div class="modal-backdrop ${chartZoomOpen ? 'open' : ''}" id="chartZoomModal">
+      <div class="modal-box modal-wide">
+        <div class="box-title">
+          <span>📊 XEM BIỂU ĐỒ / SƠ ĐỒ TASK 1</span>
+          <button class="btn btn-sm" id="closeChartZoomBtn" type="button">✕ Đóng</button>
+        </div>
+        <div class="chart-zoom-body">
+          ${
+            customTask1ImageDataUrl
+              ? `<img src="${customTask1ImageDataUrl}" alt="Task 1 Chart" style="max-width:100%;max-height:72vh;display:block;margin:0 auto;" />`
+              : (() => {
+                  const sp = parseChartSpec(curPrompt?.chart_spec_json);
+                  return sp ? renderChartInnerHtml(sp) : '<div class="small muted">Chưa có biểu đồ.</div>';
+                })()
+          }
+        </div>
+      </div>
+    </div>
+
     <!-- ROADMAP IMPORT MODAL -->
     <div class="modal-backdrop" id="roadmapModal">
       <div class="modal-box modal-wide">
@@ -2165,6 +2601,38 @@ function renderApp() {
   </div>`;
 
   bindEvents();
+  applyContextAutoFocus();
+}
+
+function applyContextAutoFocus(): void {
+  const anyOverlayOpen =
+    studioOpen ||
+    addVocabOpen ||
+    welcomeOpen ||
+    aiPackOpen ||
+    shortcutsModalOpen ||
+    Boolean(document.querySelector('.modal-backdrop.open'));
+  if (anyOverlayOpen) return;
+
+  if (activeTab === 'vocab' && vocabSubMode === 'dictation' && !dictationSummary && dictationBatch[dictationIdx] && !dictationChecked) {
+    document.getElementById('dictInput')?.focus();
+    return;
+  }
+  if (activeTab === 'vocab' && vocabSubMode === 'quiz') {
+    if (quizPillMode === 'fix' && !errorDrillSummary && errorDrillBatch[errorDrillIdx]?.drill_mode === 'TYPING' && !errorDrillFeedback) {
+      document.getElementById('errDrillInput')?.focus();
+    } else if (
+      quizPillMode === 'micro' &&
+      !microSummary &&
+      microQuestions[microIdx] &&
+      microQuestions[microIdx].options.length === 0 &&
+      !microFeedback
+    ) {
+      document.getElementById('microInput')?.focus();
+    } else if (quizPillMode === 'vocab' && quizPhase === 'playing' && quizQuestions[quizIdx]?.question_type === 'typing' && !quizFeedback) {
+      document.getElementById('quizTypingInput')?.focus();
+    }
+  }
 }
 
 function formatPomo(s: number): string {
@@ -2226,6 +2694,7 @@ function bindEvents() {
   document.querySelectorAll<HTMLButtonElement>('.nav-tab').forEach((btn) => {
     btn.onclick = () => {
       window.speechSynthesis?.cancel();
+      stopMicroTimer();
       activeTab = btn.dataset.tab as typeof activeTab;
       renderApp();
     };
@@ -2279,9 +2748,46 @@ function bindEvents() {
   if (promptSel) {
     promptSel.onchange = () => {
       selectedPromptId = promptSel.value;
+      customTask1ImageDataUrl = '';
       renderApp();
     };
   }
+
+  document.getElementById('zoomChartBtn')?.addEventListener('click', () => {
+    chartZoomOpen = true;
+    renderApp();
+  });
+  document.getElementById('closeChartZoomBtn')?.addEventListener('click', () => {
+    chartZoomOpen = false;
+    renderApp();
+  });
+  document.getElementById('chartZoomModal')?.addEventListener('click', (e) => {
+    if (e.target === document.getElementById('chartZoomModal')) {
+      chartZoomOpen = false;
+      renderApp();
+    }
+  });
+  document.getElementById('uploadTask1ImgBtn')?.addEventListener('click', () => {
+    document.getElementById('task1ImgInput')?.click();
+  });
+  document.getElementById('task1ImgInput')?.addEventListener('change', (e) => {
+    const file = (e.target as HTMLInputElement).files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      customTask1ImageDataUrl = String(reader.result || '');
+      renderApp();
+    };
+    reader.readAsDataURL(file);
+  });
+  document.getElementById('clearCustomTask1ImgBtn')?.addEventListener('click', () => {
+    customTask1ImageDataUrl = '';
+    renderApp();
+  });
+  document.getElementById('dismissAutoRefillToastBtn')?.addEventListener('click', () => {
+    autoRefillToastMsg = '';
+    renderApp();
+  });
 
   const toggleHintBtn = document.getElementById('toggleHintBtn');
   if (toggleHintBtn) {
@@ -2315,7 +2821,9 @@ function bindEvents() {
       const targetLabel = isAim80Mode()
         ? 'bản viết lại Band 8.0 (ưu tiên collocations C1–C2, hedging học thuật & câu phức sắc sảo)'
         : 'bản viết lại Band 6.5';
-      const rubric = `Hãy đóng vai Giám khảo IELTS Writing chấm bài dưới đây theo 4 tiêu chí (TA, CC, LR, GRA) và trả kết quả rõ ràng bằng tiếng Việt + ${targetLabel}.\n\n[ĐIỂM YẾU CẦN SOI KỸ]:\n${focusNotes}\n\n[CHẾ ĐỘ]: ${writingMode}\n[ĐỀ BÀI]: ${p?.prompt || ''}\n\n[BÀI VIẾT]:\n${content}`;
+      const chartSummary = summarizeChartSpecForPrompt(p?.chart_spec_json);
+      const chartPart = chartSummary ? `\n\n${chartSummary}` : '';
+      const rubric = `Hãy đóng vai Giám khảo IELTS Writing chấm bài dưới đây theo 4 tiêu chí (TA, CC, LR, GRA) và trả kết quả rõ ràng bằng tiếng Việt + ${targetLabel}.\n\n[ĐIỂM YẾU CẦN SOI KỸ]:\n${focusNotes}\n\n[CHẾ ĐỘ]: ${writingMode}\n[ĐỀ BÀI]: ${p?.prompt || ''}${chartPart}\n\n[BÀI VIẾT]:\n${content}`;
       await navigator.clipboard.writeText(rubric);
       writingStatusMsg = '✓ Đã copy prompt + bài viết vào Clipboard! Dán vào ChatGPT/Gemini web để chấm miễn phí.';
       writingStatusErr = false;
@@ -2324,6 +2832,19 @@ function bindEvents() {
         st.textContent = writingStatusMsg;
         st.className = 'status-msg ok';
       }
+    };
+  }
+
+  const markWritingDoneBtn = document.getElementById('markWritingDoneBtn');
+  if (markWritingDoneBtn) {
+    markWritingDoneBtn.onclick = async () => {
+      const p = getCurrentPrompt();
+      dash = await invoke<DashboardState>('mark_writing_practiced', {
+        promptId: p?.id || null,
+      });
+      writingStatusMsg = '✓ Đã đánh dấu hoàn thành bài Writing hôm nay & cộng phút học!';
+      writingStatusErr = false;
+      renderApp();
     };
   }
 
@@ -2349,9 +2870,11 @@ function bindEvents() {
       if (restored) restored.value = content;
       try {
         const p = getCurrentPrompt();
+        const chartSummary = summarizeChartSpecForPrompt(p?.chart_spec_json);
+        const fullPrompt = chartSummary ? `${p?.prompt || ''}\n\n${chartSummary}` : p?.prompt || '';
         const res = await invoke<GradeResponseDto>('grade_writing', {
           mode: writingMode,
-          prompt: p?.prompt || '',
+          prompt: fullPrompt,
           content,
         });
         lastGrade = res.result;
@@ -2384,6 +2907,7 @@ function bindEvents() {
   document.querySelectorAll<HTMLButtonElement>('[data-vsub]').forEach((btn) => {
     btn.onclick = async () => {
       window.speechSynthesis?.cancel();
+      stopMicroTimer();
       vocabSubMode = btn.dataset.vsub as typeof vocabSubMode;
       if (vocabSubMode === 'dictation' && !dictationBatch.length) {
         dictationBatch = await invoke<DictationSentence[]>('get_dictation_batch', { count: 5 });
@@ -2503,19 +3027,59 @@ function bindEvents() {
     hideVocabBtn.onclick = async () => {
       const card = dueCards[cardIdx];
       if (!card) return;
+      confirmDeleteCardId = null;
       dash = await invoke<DashboardState>('toggle_hide_vocab_card', { cardId: card.id, hidden: true });
       dueCards = await invoke<VocabCard[]>('get_due_vocab', { onlyLeech: onlyLeechFilter });
       if (cardIdx >= dueCards.length) cardIdx = 0;
       cardFlipped = false;
+      undoHideCard = { id: card.id, word: card.word };
+      if (undoHideTimer !== null) window.clearTimeout(undoHideTimer);
+      undoHideTimer = window.setTimeout(() => {
+        undoHideCard = null;
+        undoHideTimer = null;
+        if (activeTab === 'vocab' && vocabSubMode === 'flashcard') renderApp();
+      }, 5000);
       renderApp();
     };
   }
+
+  document.getElementById('undoHideCardBtn')?.addEventListener('click', async () => {
+    if (!undoHideCard) return;
+    const restoreId = undoHideCard.id;
+    undoHideCard = null;
+    if (undoHideTimer !== null) {
+      window.clearTimeout(undoHideTimer);
+      undoHideTimer = null;
+    }
+    dash = await invoke<DashboardState>('toggle_hide_vocab_card', { cardId: restoreId, hidden: false });
+    dueCards = await invoke<VocabCard[]>('get_due_vocab', { onlyLeech: onlyLeechFilter });
+    const restoredIdx = dueCards.findIndex((c) => c.id === restoreId);
+    if (restoredIdx >= 0) cardIdx = restoredIdx;
+    cardFlipped = false;
+    renderApp();
+  });
 
   const deleteVocabBtn = document.getElementById('deleteVocabBtn');
   if (deleteVocabBtn) {
     deleteVocabBtn.onclick = async () => {
       const card = dueCards[cardIdx];
       if (!card) return;
+      if (confirmDeleteCardId !== card.id) {
+        confirmDeleteCardId = card.id;
+        if (confirmDeleteTimer !== null) window.clearTimeout(confirmDeleteTimer);
+        confirmDeleteTimer = window.setTimeout(() => {
+          confirmDeleteCardId = null;
+          confirmDeleteTimer = null;
+          if (activeTab === 'vocab' && vocabSubMode === 'flashcard') renderApp();
+        }, 4000);
+        renderApp();
+        return;
+      }
+      confirmDeleteCardId = null;
+      if (confirmDeleteTimer !== null) {
+        window.clearTimeout(confirmDeleteTimer);
+        confirmDeleteTimer = null;
+      }
       dash = await invoke<DashboardState>('delete_vocab_card', { cardId: card.id });
       dueCards = await invoke<VocabCard[]>('get_due_vocab', { onlyLeech: onlyLeechFilter });
       if (cardIdx >= dueCards.length) cardIdx = 0;
@@ -2528,6 +3092,7 @@ function bindEvents() {
     btn.onclick = async () => {
       const card = dueCards[cardIdx];
       if (!card) return;
+      confirmDeleteCardId = null;
       const quality = Number(btn.dataset.q);
       await invoke('review_vocab', { cardId: card.id, quality });
       dueCards = await invoke<VocabCard[]>('get_due_vocab', { onlyLeech: onlyLeechFilter });
@@ -2602,9 +3167,13 @@ function bindEvents() {
   // Quiz Pills & Modes
   document.querySelectorAll<HTMLButtonElement>('[data-qpill]').forEach((btn) => {
     btn.onclick = async () => {
-      quizPillMode = btn.dataset.qpill as typeof quizPillMode;
-      if (quizPillMode === 'fix' && !errorFixQuestions.length) {
-        await loadErrorFixQuiz();
+      const nextPill = btn.dataset.qpill as typeof quizPillMode;
+      if (nextPill !== 'micro') {
+        stopMicroTimer();
+      }
+      quizPillMode = nextPill;
+      if (quizPillMode === 'fix' && !errorDrillBatch.length && !errorDrillSummary) {
+        await loadErrorDrills();
       } else if (quizPillMode === 'micro' && !microQuestions.length && !microSummary) {
         await startMicroCheck();
       }
@@ -2612,86 +3181,113 @@ function bindEvents() {
     };
   });
 
-  // Error Fix Quiz
-  document.getElementById('startErrFixBtn')?.addEventListener('click', async () => {
-    await loadErrorFixQuiz();
+  // Error-Driven Mastery Drills
+  document.getElementById('startErrDrillBtn')?.addEventListener('click', async () => {
+    await loadErrorDrills();
     renderApp();
   });
-  document.getElementById('restartErrFixBtn')?.addEventListener('click', async () => {
-    await loadErrorFixQuiz();
+  document.getElementById('restartErrDrillBtn')?.addEventListener('click', async () => {
+    await loadErrorDrills();
     renderApp();
   });
-  const errFixIn = document.getElementById('errFixInput') as HTMLTextAreaElement | null;
-  const submitErrFix = () => {
-    const q = errorFixQuestions[errorFixIdx];
-    if (!q || errorFixFeedback || !errFixIn) return;
-    errorFixInput = errFixIn.value;
-    const evalRes = evaluateErrorFixAnswer(errorFixInput, q.wrong_text, q.right_text);
-    if (evalRes.matched) errorFixCorrectCount += 1;
-    errorFixFeedback = {
-      correct: evalRes.matched,
-      target: q.right_text,
-      matchReason: evalRes.matchReason,
-      diffHtml: evalRes.matched ? undefined : buildBestWordDiffHtml(errorFixInput, evalRes.variants, q.right_text),
+
+  const recordErrorDrillOutcome = (correct: boolean, selectedOpt?: string, matchReason?: string) => {
+    const q = errorDrillBatch[errorDrillIdx];
+    if (!q || errorDrillFeedback) return;
+    errorDrillAnswers.push({
+      error_log_id: q.error_log_id,
+      drill_id: q.drill_id,
+      context_tag: q.context_tag,
+      correct,
+    });
+    const nextStreak = correct ? q.streak_distinct + 1 : 0;
+    const masteredNow = correct && nextStreak >= 3 && q.status !== 'mastered';
+    errorDrillFeedback = {
+      correct,
+      target: q.answer,
+      selectedOpt,
+      matchReason,
+      rationaleVi: q.rationale_vi,
+      streakAfter: nextStreak,
+      masteredNow,
     };
     renderApp();
   };
-  if (errFixIn) {
-    errFixIn.oninput = () => {
-      errorFixInput = errFixIn.value;
+
+  document.querySelectorAll<HTMLButtonElement>('[data-edrill-opt]').forEach((btn) => {
+    btn.onclick = () => {
+      const q = errorDrillBatch[errorDrillIdx];
+      if (!q || errorDrillFeedback) return;
+      const opt = q.options[Number(btn.dataset.edrillOpt)];
+      recordErrorDrillOutcome(opt === q.answer, opt);
     };
-    errFixIn.onkeydown = (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        submitErrFix();
-      }
+  });
+
+  const errDrillIn = document.getElementById('errDrillInput') as HTMLInputElement | null;
+  const submitErrDrillTyping = () => {
+    const q = errorDrillBatch[errorDrillIdx];
+    if (!q || errorDrillFeedback || !errDrillIn) return;
+    errorDrillInput = errDrillIn.value;
+    const ok = isTypingAnswerMatch(errorDrillInput, q.answer);
+    recordErrorDrillOutcome(ok, undefined, ok ? 'Chính xác' : undefined);
+  };
+  if (errDrillIn) {
+    errDrillIn.oninput = () => {
+      errorDrillInput = errDrillIn.value;
     };
   }
-  document.getElementById('checkErrFixBtn')?.addEventListener('click', submitErrFix);
-  document.getElementById('errFixSelfAcceptBtn')?.addEventListener('click', () => {
-    if (!errorFixFeedback || errorFixFeedback.correct) return;
-    errorFixFeedback.correct = true;
-    errorFixFeedback.selfAccepted = true;
-    errorFixFeedback.matchReason = 'Tự xác nhận đúng nghĩa';
-    errorFixCorrectCount += 1;
+  document.getElementById('checkErrDrillBtn')?.addEventListener('click', submitErrDrillTyping);
+  document.getElementById('errDrillSelfAcceptBtn')?.addEventListener('click', () => {
+    if (!errorDrillFeedback || errorDrillFeedback.correct) return;
+    errorDrillFeedback.correct = true;
+    errorDrillFeedback.selfAccepted = true;
+    errorDrillFeedback.matchReason = 'Tự xác nhận đúng';
+    const last = errorDrillAnswers[errorDrillAnswers.length - 1];
+    if (last) last.correct = true;
     renderApp();
   });
-  document.getElementById('errFixAiGradeBtn')?.addEventListener('click', async () => {
-    const q = errorFixQuestions[errorFixIdx];
-    if (!q || !errorFixFeedback || errorFixFeedback.correct || errorFixFeedback.aiChecking) return;
-    errorFixFeedback.aiChecking = true;
-    errorFixFeedback.aiError = undefined;
+  document.getElementById('errDrillAiGradeBtn')?.addEventListener('click', async () => {
+    const q = errorDrillBatch[errorDrillIdx];
+    if (!q || !errorDrillFeedback || errorDrillFeedback.correct || errorDrillFeedback.aiChecking) return;
+    errorDrillFeedback.aiChecking = true;
+    errorDrillFeedback.aiError = undefined;
     renderApp();
     try {
       const res = await invoke<ErrorFixAiGrade>('grade_error_fix_with_ai', {
-        wrongText: q.wrong_text,
-        expectedText: q.right_text,
-        userAnswer: errorFixInput,
+        wrongText: q.stem,
+        expectedText: q.answer,
+        userAnswer: errorDrillInput,
       });
-      if (errorFixFeedback) {
-        errorFixFeedback.aiChecking = false;
-        errorFixFeedback.aiFeedback = res.feedback;
-        if (res.correct && !errorFixFeedback.correct) {
-          errorFixFeedback.correct = true;
-          errorFixFeedback.matchReason = 'AI xác nhận đúng';
-          errorFixCorrectCount += 1;
+      if (errorDrillFeedback) {
+        errorDrillFeedback.aiChecking = false;
+        errorDrillFeedback.aiFeedback = res.feedback;
+        if (res.correct && !errorDrillFeedback.correct) {
+          errorDrillFeedback.correct = true;
+          errorDrillFeedback.matchReason = 'AI xác nhận đúng';
+          const last = errorDrillAnswers[errorDrillAnswers.length - 1];
+          if (last) last.correct = true;
         }
       }
     } catch (e) {
-      if (errorFixFeedback) {
-        errorFixFeedback.aiChecking = false;
-        errorFixFeedback.aiError = String(e);
+      if (errorDrillFeedback) {
+        errorDrillFeedback.aiChecking = false;
+        errorDrillFeedback.aiError = String(e);
       }
     }
     renderApp();
   });
-  document.getElementById('nextErrFixBtn')?.addEventListener('click', () => {
-    if (errorFixIdx + 1 >= errorFixQuestions.length) {
-      errorFixDone = true;
+  document.getElementById('nextErrDrillBtn')?.addEventListener('click', async () => {
+    if (errorDrillIdx + 1 >= errorDrillBatch.length) {
+      errorDrillSummary = await invoke<ErrorDrillSubmitResult>('submit_error_drill_session', {
+        results: errorDrillAnswers,
+      });
+      dash = await invoke<DashboardState>('get_dashboard');
+      errorDrillBatch = [];
+      errorDrillFeedback = null;
     } else {
-      errorFixIdx += 1;
-      errorFixInput = '';
-      errorFixFeedback = null;
+      errorDrillIdx += 1;
+      errorDrillInput = '';
+      errorDrillFeedback = null;
     }
     renderApp();
   });
@@ -2704,6 +3300,9 @@ function bindEvents() {
   document.getElementById('restartMicroBtn')?.addEventListener('click', async () => {
     await startMicroCheck();
     renderApp();
+  });
+  document.getElementById('microFinishEarlyBtn')?.addEventListener('click', () => {
+    void finishMicroEarly();
   });
   document.querySelectorAll<HTMLButtonElement>('[data-micro-opt]').forEach((btn) => {
     btn.onclick = () => {
@@ -2753,12 +3352,6 @@ function bindEvents() {
   if (microInEl) {
     microInEl.oninput = () => {
       microInput = microInEl.value;
-    };
-    microInEl.onkeydown = (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        checkMicro(false);
-      }
     };
   }
   document.getElementById('microCheckBtn')?.addEventListener('click', () => checkMicro(false));
@@ -2901,12 +3494,6 @@ function bindEvents() {
   document.getElementById('quizCheckTypingBtn')?.addEventListener('click', checkTyping);
   if (quizTypingInput && !quizFeedback) {
     quizTypingInput.focus();
-    quizTypingInput.onkeydown = (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        checkTyping();
-      }
-    };
   }
 
   const quizNextBtn = document.getElementById('quizNextBtn');
@@ -2968,6 +3555,9 @@ function bindEvents() {
     dictationResults = [];
     dictationSummary = null;
     renderApp();
+    if (dictationAutoPlay && dictationBatch[0]) {
+      speakText(dictationBatch[0].sentence, dash?.settings.tts_accent || 'en-GB', dictationRate);
+    }
   });
 
   document.getElementById('dictNewBatchBtn')?.addEventListener('click', async () => {
@@ -2979,6 +3569,9 @@ function bindEvents() {
     dictationResults = [];
     dictationSummary = null;
     renderApp();
+    if (dictationAutoPlay && dictationBatch[0]) {
+      speakText(dictationBatch[0].sentence, dash?.settings.tts_accent || 'en-GB', dictationRate);
+    }
   });
 
   document.querySelectorAll<HTMLButtonElement>('[data-rate]').forEach((btn) => {
@@ -2986,6 +3579,11 @@ function bindEvents() {
       dictationRate = Number(btn.dataset.rate);
       renderApp();
     };
+  });
+
+  document.getElementById('dictAutoPlayChip')?.addEventListener('click', () => {
+    dictationAutoPlay = !dictationAutoPlay;
+    renderApp();
   });
 
   document.getElementById('dictPlayBtn')?.addEventListener('click', () => {
@@ -3001,6 +3599,7 @@ function bindEvents() {
     const text = dictInputEl ? dictInputEl.value : dictationInput;
     dictationInput = text;
     const { tokens, pct, wrongWords } = computeWordDiff(text, cur.sentence);
+    const pairs = extractDictationErrorPairs(text, cur.sentence, 3);
     const tokensHtml = tokens
       .map((t) =>
         t.kind === 'ok'
@@ -3010,18 +3609,15 @@ function bindEvents() {
             : `<span class="w-bad">${esc(t.word)}</span>`
       )
       .join(' ');
-    dictationChecked = { pct, tokensHtml, wrongWords, pushed: false };
+    dictationChecked = { pct, tokensHtml, wrongWords, pairs, pushed: false };
     renderApp();
   };
 
   if (dictInputEl) {
     dictInputEl.oninput = () => {
       dictationInput = dictInputEl.value;
-    };
-    dictInputEl.onkeydown = (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        runDictCheck();
+      if (dictationChecked) {
+        dictationChecked = null;
       }
     };
   }
@@ -3033,13 +3629,12 @@ function bindEvents() {
 
   document.getElementById('pushDictErrBtn')?.addEventListener('click', async () => {
     const cur = dictationBatch[dictationIdx];
-    if (!cur || !dictationChecked || dictationChecked.pushed || !dictationChecked.wrongWords.length) return;
-    const wrongSnippet = dictationInput.trim() || '(nghe sót)';
-    const rightSnippet = dictationChecked.wrongWords.join(', ');
-    dash = await invoke<DashboardState>('add_error_log', {
-      category: `Listening · ${cur.trap_focus}`,
-      wrongText: wrongSnippet.slice(0, 80),
-      rightText: rightSnippet,
+    if (!cur || !dictationChecked || dictationChecked.pushed || !dictationChecked.pairs.length) return;
+    dash = await invoke<DashboardState>('log_dictation_errors', {
+      sentenceId: cur.id,
+      trapFocus: cur.trap_focus,
+      sentence: cur.sentence,
+      pairs: dictationChecked.pairs,
     });
     dictationChecked.pushed = true;
     renderApp();
@@ -3058,13 +3653,18 @@ function bindEvents() {
         results: dictationResults,
       });
       dash = await invoke<DashboardState>('get_dashboard');
+      renderApp();
     } else {
       dictationIdx += 1;
       dictationInput = '';
       dictationHintWords = 0;
       dictationChecked = null;
+      renderApp();
+      const nextCur = dictationBatch[dictationIdx];
+      if (dictationAutoPlay && nextCur) {
+        speakText(nextCur.sentence, dash?.settings.tts_accent || 'en-GB', dictationRate);
+      }
     }
-    renderApp();
   });
 
   // Tab 4: Roadmap, Error Log & Paraphrase
@@ -3135,29 +3735,37 @@ function bindEvents() {
     };
   });
 
+  document.querySelectorAll<HTMLButtonElement>('[data-gen-err-drills]').forEach((btn) => {
+    btn.onclick = async () => {
+      const errorLogId = Number(btn.dataset.genErrDrills);
+      generatingAiDrillErrId = errorLogId;
+      errFormMsg = '⏳ Đang nhờ Gemini sinh 3 bài tập thực chiến lưu offline...';
+      errFormErr = false;
+      renderApp();
+      try {
+        dash = await invoke<DashboardState>('generate_ai_drills_for_error', { errorLogId });
+        errFormMsg = '✓ Đã sinh xong 3 bài tập thực chiến cho lỗi này (lưu offline vào Sổ lỗi)!';
+        errFormErr = false;
+      } catch (err) {
+        errFormMsg = `✕ ${String(err)}`;
+        errFormErr = true;
+      } finally {
+        generatingAiDrillErrId = null;
+        renderApp();
+      }
+    };
+  });
+
   if (scrollToNewErr) {
     scrollToNewErr = false;
     document.querySelector('.log-table-wrap')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 
   // Speaking Studio Overlay
-  const closeStudio = () => {
-    if (studioRunning) {
-      stopStudioTimer();
-      studioRunning = false;
-      finishCurrentRecordingClip();
-    }
-    stopMediaRecorderIfActive();
-    studioPlaybackAudio?.pause();
-    studioPlaybackAudio = null;
-    revokeRecordedBlobs();
-    studioOpen = false;
-    renderApp();
-  };
-  document.getElementById('closeStudioBtn')?.addEventListener('click', closeStudio);
+  document.getElementById('closeStudioBtn')?.addEventListener('click', closeSpeakingStudio);
   document.getElementById('vBackdrop')?.addEventListener('click', () => {
     if (addVocabOpen) addVocabOpen = false;
-    if (studioOpen) closeStudio();
+    if (studioOpen) closeSpeakingStudio();
     else renderApp();
   });
 
@@ -3223,6 +3831,7 @@ function bindEvents() {
       renderApp();
       return;
     }
+    if (!validateSpeakingCustomCue()) return;
     if (studioStageIdx === 0 && studioSecsLeft === plan.stages[0].secs && recordedBlobs.length > 0) {
       revokeRecordedBlobs();
     }
@@ -3247,21 +3856,33 @@ function bindEvents() {
     void advanceStudioStage();
   });
 
+  document.querySelectorAll<HTMLButtonElement>('[data-pick-clip]').forEach((btn) => {
+    btn.onclick = () => {
+      selectedClipIdx = Number(btn.dataset.pickClip);
+      renderApp();
+    };
+  });
+
+  document.getElementById('toggleSpeakHistoryBtn')?.addEventListener('click', () => {
+    speakingHistoryOpen = !speakingHistoryOpen;
+    renderApp();
+  });
+
   document.getElementById('studioReplayBtn')?.addEventListener('click', () => {
-    const last = recordedBlobs[recordedBlobs.length - 1];
-    if (!last) return;
+    const clip = recordedBlobs[selectedClipIdx] || recordedBlobs[recordedBlobs.length - 1];
+    if (!clip) return;
     if (studioPlaybackAudio) {
       studioPlaybackAudio.pause();
     }
-    studioPlaybackAudio = new Audio(last.url);
+    studioPlaybackAudio = new Audio(clip.url);
     void studioPlaybackAudio.play();
   });
 
   const downloadLastAudio = () => {
-    const last = recordedBlobs[recordedBlobs.length - 1];
-    if (!last) return;
+    const clip = recordedBlobs[selectedClipIdx] || recordedBlobs[recordedBlobs.length - 1];
+    if (!clip) return;
     const a = document.createElement('a');
-    a.href = last.url;
+    a.href = clip.url;
     a.download = `xd4t-speaking-${Date.now()}.webm`;
     a.click();
   };
@@ -3269,7 +3890,7 @@ function bindEvents() {
   document.getElementById('fallbackDownloadAudioBtn')?.addEventListener('click', downloadLastAudio);
 
   document.getElementById('gradeSpeakingAiBtn')?.addEventListener('click', async () => {
-    if (!dash) return;
+    if (!dash || !validateSpeakingCustomCue()) return;
     finishCurrentRecordingClip();
     await new Promise((r) => setTimeout(r, 250));
     if (!recordedBlobs.length) {
@@ -3318,6 +3939,7 @@ function bindEvents() {
   });
 
   document.getElementById('fallbackCopyPromptBtn')?.addEventListener('click', async () => {
+    if (!validateSpeakingCustomCue()) return;
     const cueTitle = studioSource === 'bank' && studioCue ? studioCue.cue_title : customCueTitle;
     const p3 =
       studioSource === 'bank' && studioCue
@@ -3360,6 +3982,7 @@ function bindEvents() {
   });
 
   document.getElementById('saveManualSpeakBtn')?.addEventListener('click', async () => {
+    if (!validateSpeakingCustomCue()) return;
     const cueTitle = studioSource === 'bank' && studioCue ? studioCue.cue_title : customCueTitle;
     const checkedN = manualChecks.filter(Boolean).length;
     const note = manualNote.trim() || `Tự chấm ${checkedN}/5 mục checklist Speaking`;
@@ -3530,12 +4153,7 @@ function bindEvents() {
 
   document.querySelectorAll<HTMLButtonElement>('.settings-level-card').forEach((btn) => {
     btn.onclick = async () => {
-      dash = await invoke<DashboardState>('set_study_level', { level: btn.dataset.pickLevel! });
-      dueCards = await invoke<VocabCard[]>('get_due_vocab', { onlyLeech: onlyLeechFilter });
-      cardIdx = 0;
-      cardFlipped = false;
-      studioCue = null;
-      dictationBatch = [];
+      await switchStudyLevel(btn.dataset.pickLevel!);
       renderApp();
       document.getElementById('settingsModal')?.classList.add('open');
     };
@@ -3548,6 +4166,7 @@ function bindEvents() {
     const remVal = (document.getElementById('setReminder') as HTMLInputElement).value.trim();
     const autoVal = (document.getElementById('setAutostart') as HTMLInputElement).checked;
     const ttsVal = (document.getElementById('setTtsAccent') as HTMLSelectElement).value;
+    const autoRefillVal = (document.getElementById('setAutoRefill') as HTMLInputElement)?.checked ?? true;
     await invoke('update_settings', {
       geminiApiKey: keyVal ? keyVal : null,
       geminiModel: modelVal,
@@ -3555,6 +4174,7 @@ function bindEvents() {
       reminderTime: remVal,
       autostart: autoVal,
       ttsAccent: ttsVal,
+      autoRefillEnabled: autoRefillVal,
     });
     dash = await invoke<DashboardState>('get_dashboard');
     settingsModal.classList.remove('open');
@@ -3573,10 +4193,7 @@ function bindEvents() {
   document.querySelectorAll<HTMLButtonElement>('.welcome-level-card').forEach((btn) => {
     btn.onclick = async () => {
       const level = btn.dataset.pickLevel!;
-      dash = await invoke<DashboardState>('set_study_level', { level });
-      dueCards = await invoke<VocabCard[]>('get_due_vocab', { onlyLeech: onlyLeechFilter });
-      cardIdx = 0;
-      cardFlipped = false;
+      await switchStudyLevel(level);
       welcomeMsg =
         level === '8.0'
           ? '✓ Đã chuyển sang Lộ trình Nâng cao Aim 8.0.'
@@ -3811,58 +4428,446 @@ function bindEvents() {
     scoreModal.classList.remove('open');
     renderApp();
   };
+
+  // AI Content Pack Modal
+  document.getElementById('openAiPackTab1Btn')?.addEventListener('click', openAiPackModal);
+  document.getElementById('openAiPackTab3Btn')?.addEventListener('click', openAiPackModal);
+  document.getElementById('settingsToAiPackBtn')?.addEventListener('click', () => {
+    settingsModal.classList.remove('open');
+    openAiPackModal();
+  });
+  const closeAiPack = () => {
+    aiPackOpen = false;
+    renderApp();
+  };
+  document.getElementById('closeAiPackBtn')?.addEventListener('click', closeAiPack);
+  document.getElementById('cancelAiPackBtn')?.addEventListener('click', closeAiPack);
+  document.getElementById('aiPackModal')?.addEventListener('click', (e) => {
+    if (e.target === document.getElementById('aiPackModal')) closeAiPack();
+  });
+  document.getElementById('aiPackOpenSettingsBtn')?.addEventListener('click', () => {
+    aiPackOpen = false;
+    renderApp();
+    document.getElementById('settingsModal')?.classList.add('open');
+  });
+  document.querySelectorAll<HTMLButtonElement>('[data-pick-topic]').forEach((btn) => {
+    btn.onclick = () => {
+      aiPackTopic = btn.dataset.pickTopic || 'Environment';
+      renderApp();
+    };
+  });
+  document.getElementById('aiPackTopicIn')?.addEventListener('input', (e) => {
+    aiPackTopic = (e.target as HTMLInputElement).value;
+  });
+  document.getElementById('runAiPackBtn')?.addEventListener('click', async () => {
+    if (aiPackLoading || !aiPackTopic.trim()) return;
+    aiPackLoading = true;
+    aiPackError = '';
+    aiPackResult = null;
+    renderApp();
+    try {
+      aiPackResult = await invoke<RefillPackResult>('refill_content_pack', { topic: aiPackTopic.trim() });
+      dash = await invoke<DashboardState>('get_dashboard');
+      dueCards = await invoke<VocabCard[]>('get_due_vocab', { onlyLeech: onlyLeechFilter });
+      dictationBatch = [];
+      errorDrillBatch = [];
+    } catch (err) {
+      aiPackError = String(err);
+    } finally {
+      aiPackLoading = false;
+      renderApp();
+    }
+  });
+
+  // Keyboard Cheatsheet Overlay
+  document.getElementById('openShortcutsBtn')?.addEventListener('click', () => {
+    shortcutsModalOpen = true;
+    renderApp();
+  });
+  const closeShortcuts = () => {
+    shortcutsModalOpen = false;
+    renderApp();
+  };
+  document.getElementById('closeShortcutsBtn')?.addEventListener('click', closeShortcuts);
+  document.getElementById('shortcutsModal')?.addEventListener('click', (e) => {
+    if (e.target === document.getElementById('shortcutsModal')) closeShortcuts();
+  });
 }
 
-// Global keyboard shortcuts
+// Unified Keyboard-First Dispatcher (0-mouse-click study flow)
 document.addEventListener('keydown', (e) => {
-  const activeTag = document.activeElement?.tagName;
-  const isTyping = activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT';
+  const target = e.target as HTMLElement | null;
+  const activeTag = target?.tagName;
+  const isTyping = Boolean(
+    target && (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT' || target.isContentEditable)
+  );
+  const hasModalBackdrop = Boolean(document.querySelector('.modal-backdrop.open'));
 
+  // 1. Escape closes overlays/modals/studio or blurs input
   if (e.key === 'Escape') {
+    if (chartZoomOpen) {
+      chartZoomOpen = false;
+      renderApp();
+      return;
+    }
+    if (shortcutsModalOpen) {
+      shortcutsModalOpen = false;
+      renderApp();
+      return;
+    }
+    if (aiPackOpen) {
+      aiPackOpen = false;
+      renderApp();
+      return;
+    }
     const welcomeEl = document.getElementById('welcomeModal');
     if (welcomeEl?.classList.contains('open')) {
       welcomeOpen = false;
       void finishOnboarding();
+      return;
     }
     if (addVocabOpen) {
       addVocabOpen = false;
       renderApp();
+      return;
     }
     if (studioOpen) {
-      if (studioRunning) {
-        stopStudioTimer();
-        studioRunning = false;
-        finishCurrentRecordingClip();
-      }
-      stopMediaRecorderIfActive();
-      studioPlaybackAudio?.pause();
-      studioPlaybackAudio = null;
-      revokeRecordedBlobs();
-      studioOpen = false;
-      renderApp();
+      closeSpeakingStudio();
+      return;
     }
-    document.querySelectorAll('.modal-backdrop.open').forEach((m) => m.classList.remove('open'));
+    if (hasModalBackdrop) {
+      document.querySelectorAll('.modal-backdrop.open').forEach((m) => m.classList.remove('open'));
+      return;
+    }
+    if (isTyping) {
+      target?.blur();
+    }
     return;
   }
 
-  if (e.ctrlKey && e.code === 'Space' && activeTab === 'vocab' && vocabSubMode === 'dictation') {
+  // 2. Global '?' cheatsheet toggle
+  if ((e.key === '?' || (e.shiftKey && e.key === '/')) && !isTyping && !e.ctrlKey && !e.altKey && !e.metaKey) {
     e.preventDefault();
-    const cur = dictationBatch[dictationIdx];
-    if (cur) speakText(cur.sentence, dash?.settings.tts_accent || 'en-GB', dictationRate);
+    shortcutsModalOpen = !shortcutsModalOpen;
+    renderApp();
     return;
   }
 
-  if (!isTyping && activeTab === 'vocab' && vocabSubMode === 'flashcard' && !studioOpen && !addVocabOpen) {
-    if (e.code === 'Space') {
+  // 3. Global Alt+1..4 tabs & Alt+S Speaking Studio
+  if (e.altKey && !e.ctrlKey && !e.metaKey) {
+    const k = e.key.toLowerCase();
+    if (k === '1' || k === '2' || k === '3' || k === '4') {
+      e.preventDefault();
+      window.speechSynthesis?.cancel();
+      stopMicroTimer();
+      shortcutsModalOpen = false;
+      aiPackOpen = false;
+      document.querySelectorAll('.modal-backdrop.open').forEach((m) => m.classList.remove('open'));
+      const tabMap: Record<string, typeof activeTab> = {
+        '1': 'today',
+        '2': 'writing',
+        '3': 'vocab',
+        '4': 'roadmap',
+      };
+      activeTab = tabMap[k];
+      renderApp();
+      return;
+    }
+    if (k === 's') {
+      e.preventDefault();
+      if (studioOpen) closeSpeakingStudio();
+      else void openSpeakingStudio();
+      return;
+    }
+    if (k === 't' && activeTab === 'writing' && !studioOpen && !hasModalBackdrop) {
+      e.preventDefault();
+      top3Collapsed = !top3Collapsed;
+      renderApp();
+      return;
+    }
+    if (k === 'n' && studioOpen) {
+      e.preventDefault();
+      document.getElementById('studioNextStageBtn')?.click();
+      return;
+    }
+  }
+
+  // 4. Speaking Studio shortcuts (when open)
+  if (studioOpen) {
+    if (e.ctrlKey && e.code === 'Space') {
+      e.preventDefault();
+      document.getElementById('studioGoBtn')?.click();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      document.getElementById('gradeSpeakingAiBtn')?.click();
+      return;
+    }
+    return;
+  }
+
+  if (hasModalBackdrop || addVocabOpen || shortcutsModalOpen || aiPackOpen || welcomeOpen) {
+    return;
+  }
+
+  // 5. Tab 2 Writing shortcuts
+  if (activeTab === 'writing') {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      document.getElementById('gradeBtn')?.click();
+    }
+    return;
+  }
+
+  // 6. Tab 3 Vocabulary, Quiz, Error Drills, Micro-Check & Dictation
+  if (activeTab !== 'vocab') return;
+
+  // 6a. Flashcard SRS
+  if (vocabSubMode === 'flashcard') {
+    if (leechFixCardId !== null) {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        document.getElementById('saveLeechFixBtn')?.click();
+      }
+      return;
+    }
+    const cur = dueCards[cardIdx];
+    if (e.ctrlKey && e.code === 'Space') {
+      e.preventDefault();
+      if (cur) speakText(cur.word, dash?.settings.tts_accent || 'en-GB', 1.0);
+      return;
+    }
+    if (isTyping || !cur) return;
+    const low = e.key.toLowerCase();
+    if (e.code === 'Space' || e.key === 'Enter') {
       e.preventDefault();
       cardFlipped = !cardFlipped;
       renderApp();
-    } else if (e.key.toLowerCase() === 'v') {
-      const cur = dueCards[cardIdx];
-      if (cur) speakText(cur.word, dash?.settings.tts_accent || 'en-GB', 1.0);
+    } else if (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4') {
+      e.preventDefault();
+      const qVal = Number(e.key) - 1;
+      document.querySelector<HTMLButtonElement>(`.srs-btn[data-q="${qVal}"]`)?.click();
+    } else if (low === 'r' || low === 'v') {
+      e.preventDefault();
+      speakText(cur.word, dash?.settings.tts_accent || 'en-GB', 1.0);
+    } else if (low === 'e') {
+      e.preventDefault();
+      speakText(cur.example, dash?.settings.tts_accent || 'en-GB', 1.0);
+    } else if (low === 'c') {
+      const fixBtn = document.getElementById('openLeechFixBtn');
+      if (fixBtn) {
+        e.preventDefault();
+        fixBtn.click();
+      }
+    }
+    return;
+  }
+
+  // 6b. Dictation
+  if (vocabSubMode === 'dictation') {
+    const cur = dictationBatch[dictationIdx];
+    if (e.ctrlKey && e.code === 'Space') {
+      e.preventDefault();
+      if (cur) speakText(cur.sentence, dash?.settings.tts_accent || 'en-GB', dictationRate);
+      return;
+    }
+    if (e.ctrlKey && (e.key === '1' || e.key === '2' || e.key === '3')) {
+      e.preventDefault();
+      const rateMap: Record<string, number> = { '1': 0.85, '2': 1, '3': 1.15 };
+      dictationRate = rateMap[e.key];
+      renderApp();
+      if (cur) speakText(cur.sentence, dash?.settings.tts_accent || 'en-GB', dictationRate);
+      return;
+    }
+    if (e.ctrlKey && e.key.toLowerCase() === 'h') {
+      e.preventDefault();
+      document.getElementById('dictHintBtn')?.click();
+      return;
+    }
+    if (e.ctrlKey && e.key.toLowerCase() === 'l') {
+      e.preventDefault();
+      document.getElementById('pushDictErrBtn')?.click();
+      return;
+    }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      if (dictationSummary) {
+        e.preventDefault();
+        document.getElementById('dictNewBatchBtn')?.click();
+      } else if (!cur) {
+        e.preventDefault();
+        document.getElementById('loadDictBatchBtn')?.click();
+      } else if (!dictationChecked) {
+        e.preventDefault();
+        document.getElementById('dictCheckBtn')?.click();
+      } else {
+        e.preventDefault();
+        document.getElementById('dictNextBtn')?.click();
+      }
+    }
+    return;
+  }
+
+  // 6c. Quiz / Error Drill / Micro-Check
+  if (vocabSubMode === 'quiz') {
+    const keyLow = e.key.toLowerCase();
+    const optIndexFromKey = (): number => {
+      if (e.key >= '1' && e.key <= '4') return Number(e.key) - 1;
+      if (keyLow >= 'a' && keyLow <= 'd') return keyLow.charCodeAt(0) - 97;
+      return -1;
+    };
+
+    if (quizPillMode === 'vocab') {
+      if (quizPhase === 'setup' && !isTyping && e.key === 'Enter') {
+        e.preventDefault();
+        document.getElementById('startQuizBtn')?.click();
+        return;
+      }
+      if (quizPhase === 'summary' && !isTyping && e.key === 'Enter') {
+        e.preventDefault();
+        (document.getElementById('quizReviewForgottenBtn') || document.getElementById('quizRestartBtn'))?.click();
+        return;
+      }
+      if (quizPhase === 'playing') {
+        const q = quizQuestions[quizIdx];
+        if (!q) return;
+        if (quizFeedback) {
+          if (e.key === 'Enter' || (!isTyping && e.code === 'Space')) {
+            e.preventDefault();
+            document.getElementById('quizNextBtn')?.click();
+          }
+          return;
+        }
+        if (q.question_type === 'typing') {
+          if (e.ctrlKey && keyLow === 'h') {
+            e.preventDefault();
+            document.getElementById('quizGiveUpBtn')?.click();
+          } else if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            document.getElementById('quizCheckTypingBtn')?.click();
+          }
+        } else if (!isTyping) {
+          const oi = optIndexFromKey();
+          if (oi >= 0 && oi < q.options.length) {
+            e.preventDefault();
+            document.querySelector<HTMLButtonElement>(`[data-quiz-opt="${oi}"]`)?.click();
+          } else if (keyLow === 'f') {
+            e.preventDefault();
+            document.getElementById('quizGiveUpBtn')?.click();
+          }
+        }
+      }
+      return;
+    }
+
+    if (quizPillMode === 'fix') {
+      if (errorDrillSummary && !isTyping && e.key === 'Enter') {
+        e.preventDefault();
+        document.getElementById('restartErrDrillBtn')?.click();
+        return;
+      }
+      const q = errorDrillBatch[errorDrillIdx];
+      if (!q) {
+        if (!isTyping && e.key === 'Enter') {
+          e.preventDefault();
+          document.getElementById('startErrDrillBtn')?.click();
+        }
+        return;
+      }
+      if (errorDrillFeedback) {
+        if (e.ctrlKey && keyLow === 'i') {
+          e.preventDefault();
+          document.getElementById('errDrillAiGradeBtn')?.click();
+        } else if (e.ctrlKey && keyLow === 'y') {
+          e.preventDefault();
+          document.getElementById('errDrillSelfAcceptBtn')?.click();
+        } else if (e.key === 'Enter' || (!isTyping && e.code === 'Space')) {
+          e.preventDefault();
+          document.getElementById('nextErrDrillBtn')?.click();
+        }
+        return;
+      }
+      if (q.drill_mode === 'TYPING') {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          document.getElementById('checkErrDrillBtn')?.click();
+        }
+      } else if (!isTyping) {
+        const oi = optIndexFromKey();
+        if (oi >= 0 && oi < q.options.length) {
+          e.preventDefault();
+          document.querySelector<HTMLButtonElement>(`[data-edrill-opt="${oi}"]`)?.click();
+        }
+      }
+      return;
+    }
+
+    if (quizPillMode === 'micro') {
+      if (microSummary && !isTyping && e.key === 'Enter') {
+        e.preventDefault();
+        document.getElementById('restartMicroBtn')?.click();
+        return;
+      }
+      const q = microQuestions[microIdx];
+      if (!q) {
+        if (!isTyping && e.key === 'Enter') {
+          e.preventDefault();
+          document.getElementById('startMicroBtn')?.click();
+        }
+        return;
+      }
+      if (microFeedback) {
+        if (e.ctrlKey && keyLow === 'i') {
+          e.preventDefault();
+          document.getElementById('microAiGradeBtn')?.click();
+        } else if (e.ctrlKey && keyLow === 'y') {
+          e.preventDefault();
+          document.getElementById('microSelfAcceptBtn')?.click();
+        } else if (e.key === 'Enter' || (!isTyping && e.code === 'Space')) {
+          e.preventDefault();
+          document.getElementById('microNextBtn')?.click();
+        }
+        return;
+      }
+      if (q.options.length > 0 && !isTyping) {
+        const oi = optIndexFromKey();
+        if (oi >= 0 && oi < q.options.length) {
+          e.preventDefault();
+          document.querySelector<HTMLButtonElement>(`[data-micro-opt="${oi}"]`)?.click();
+        }
+      } else if (q.options.length === 0) {
+        if (e.ctrlKey && keyLow === 'h') {
+          e.preventDefault();
+          document.getElementById('microGiveUpBtn')?.click();
+        } else if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          document.getElementById('microCheckBtn')?.click();
+        }
+      }
     }
   }
 });
+
+async function maybeRunAutoRefillInBackground() {
+  if (autoRefillTriggeredThisSession) return;
+  const st = dash?.auto_refill_status;
+  if (!st || !st.should_auto_refill || !st.recommended_topic) return;
+  autoRefillTriggeredThisSession = true;
+  try {
+    const res = await invoke<RefillPackResult>('refill_content_pack', {
+      topic: st.recommended_topic,
+      isAuto: true,
+    });
+    dash = await invoke<DashboardState>('get_dashboard');
+    dueCards = await invoke<VocabCard[]>('get_due_vocab', { onlyLeech: onlyLeechFilter });
+    dictationBatch = [];
+    errorDrillBatch = [];
+    autoRefillToastMsg = `✨ Đã tự động nạp gói tuần mới (${res.topic}): +${res.vocab_added} từ · +${res.dictations_added} Dictation · +${res.prompts_added} Writing · +${res.paraphrases_added} Paraphrase · +${res.drills_added} Luyện lỗi`;
+    renderApp();
+  } catch {
+    // Silent fallback when offline or rate-limited
+  }
+}
 
 async function init() {
   initTtsVoices();
@@ -3878,6 +4883,7 @@ async function init() {
     welcomeStep = 1;
   }
   renderApp();
+  void maybeRunAutoRefillInBackground();
 
   await listen('start-pomodoro-15', () => {
     pomoSecs = 15 * 60;

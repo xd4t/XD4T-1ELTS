@@ -12,6 +12,18 @@ export interface SettingsPublic {
   writing_checklist: string[];
   writing_focus_notes: string[];
   phase_labels: Record<string, string>;
+  auto_refill_enabled?: boolean;
+  last_ai_refill_at?: string;
+  last_ai_refill_topic?: string;
+}
+
+export interface AutoRefillStatus {
+  enabled: boolean;
+  should_auto_refill: boolean;
+  trigger_reason: string;
+  recommended_topic: string;
+  last_refill_at: string;
+  last_refill_topic: string;
 }
 
 export interface BackupResultDto {
@@ -92,6 +104,7 @@ export interface VocabCard {
   lapses: number;
   hidden: boolean;
   is_user_card: boolean;
+  source?: string;
 }
 
 export interface WritingPrompt {
@@ -101,6 +114,11 @@ export interface WritingPrompt {
   prompt: string;
   outline_hint: string;
   target_words: number;
+  topic?: string;
+  target_vocab?: string[];
+  source?: string;
+  practiced_count?: number;
+  chart_spec_json?: string;
 }
 
 export interface Correction {
@@ -135,6 +153,67 @@ export interface ErrorLog {
   right_text: string;
   count: number;
   created_at: string;
+  drill_mode: 'TYPING' | 'GRAMMAR_MCQ' | 'MINI_CASE' | string;
+  status: 'active' | 'mastered' | string;
+  streak_distinct: number;
+  last_drill_id: number;
+  last_context_tag: string;
+  drill_count: number;
+}
+
+export interface ErrorDrillQuestion {
+  drill_id: number;
+  error_log_id: number;
+  category: string;
+  drill_mode: 'TYPING' | 'GRAMMAR_MCQ' | 'MINI_CASE' | string;
+  context_tag: string;
+  stem: string;
+  options: string[];
+  answer: string;
+  rationale_vi: string;
+  wrong_text: string;
+  right_text: string;
+  streak_distinct: number;
+  status: string;
+  source: string;
+}
+
+export interface ErrorDrillResultInput {
+  error_log_id: number;
+  drill_id: number;
+  context_tag: string;
+  correct: boolean;
+}
+
+export interface ErrorDrillSingleResult {
+  error_log_id: number;
+  streak_distinct: number;
+  status: string;
+  newly_mastered: boolean;
+}
+
+export interface ErrorDrillSubmitResult {
+  total_questions: number;
+  correct_count: number;
+  accuracy_pct: number;
+  newly_mastered: string[];
+  marked_quest_done: boolean;
+}
+
+export interface DictationErrorPair {
+  wrong: string;
+  right: string;
+}
+
+export interface RefillPackResult {
+  topic: string;
+  level: string;
+  vocab_added: number;
+  dictations_added: number;
+  prompts_added: number;
+  paraphrases_added: number;
+  drills_added: number;
+  endpoint: string;
 }
 
 export interface PracticeScore {
@@ -211,6 +290,8 @@ export interface ParaphrasePair {
   source_type: string;
   trap_note: string;
   created_at: string;
+  level?: string;
+  source?: string;
 }
 
 export interface DictationSentence {
@@ -222,6 +303,7 @@ export interface DictationSentence {
   meaning_vi: string;
   practiced_count: number;
   last_accuracy: number;
+  source?: string;
 }
 
 export interface DictationResultInput {
@@ -339,4 +421,5 @@ export interface DashboardState {
   speaking_sessions: SpeakingSession[];
   practice_scores: PracticeScore[];
   prompts: WritingPrompt[];
+  auto_refill_status?: AutoRefillStatus;
 }

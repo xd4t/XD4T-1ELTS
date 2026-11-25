@@ -294,6 +294,135 @@ export function isErrorFixMatch(input: string, target: string): boolean {
   return evaluateErrorFixAnswer(input, '', target).matched;
 }
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildInflectedWordPattern(token: string): string {
+  const clean = token.trim();
+  if (!clean) return '';
+  const escTok = escapeRegExp(clean);
+  if (clean.length < 3 || !/^[a-zA-Z-]+$/.test(clean)) {
+    return escTok;
+  }
+  const lower = clean.toLowerCase();
+  const variants = new Set<string>([`${escTok}(?:s|es|ed|d|ing)?`]);
+  if (lower.endsWith('e') && clean.length >= 4) {
+    const stem = escapeRegExp(clean.slice(0, -1));
+    variants.add(`${stem}(?:es|ed|ing|e|es)`);
+  }
+  if (lower.endsWith('y') && clean.length >= 4) {
+    const stem = escapeRegExp(clean.slice(0, -1));
+    variants.add(`${stem}(?:ies|ied|ying|y)`);
+  }
+  return `(?:${Array.from(variants).join('|')})`;
+}
+
+export function findClozeMatchRange(
+  example: string,
+  word: string
+): { start: number; end: number } | null {
+  const candidates = word
+    .split(/\s+vs\s+|\/|\(/)
+    .map((p) => p.replace(/[()]/g, '').trim())
+    .filter((p) => p.length >= 2);
+  const primary = word.split('(')[0].split('/')[0].trim();
+  const searchList = primary && !candidates.includes(primary) ? [primary, ...candidates] : candidates;
+
+  for (const cand of searchList) {
+    // 1. Exact case-insensitive word-boundary match
+    const exactBoundary = new RegExp(`\\b${escapeRegExp(cand)}\\b`, 'i');
+    const exactMatch = exactBoundary.exec(example);
+    if (exactMatch && exactMatch.index >= 0) {
+      return { start: exactMatch.index, end: exactMatch.index + exactMatch[0].length };
+    }
+
+    // 2. Inflected first/last word match (e.g. "play a pivotal role in" -> "plays a pivotal role in", "deplete" -> "depleted")
+    const parts = cand.split(/\s+/).filter(Boolean);
+    if (parts.length > 0) {
+      const patternParts = parts.map((tok, i) =>
+        i === 0 || i === parts.length - 1 ? buildInflectedWordPattern(tok) : escapeRegExp(tok)
+      );
+      const inflectedRe = new RegExp(`\\b${patternParts.join('\\s+')}\\b`, 'i');
+      const m = inflectedRe.exec(example);
+      if (m && m.index >= 0) {
+        return { start: m.index, end: m.index + m[0].length };
+      }
+
+      // 3. Allow 1 optional modifier between words in 3+ word collocations (e.g., "pose a serious threat to")
+      if (parts.length >= 3) {
+        const flexPattern = patternParts.join('(?:\\s+[a-zA-Z-]+){0,1}\\s+');
+        const flexRe = new RegExp(`\\b${flexPattern}\\b`, 'i');
+        const fm = flexRe.exec(example);
+        if (fm && fm.index >= 0) {
+          return { start: fm.index, end: fm.index + fm[0].length };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+export function makeCardClozeHtml(card: { word: string; example: string; meaning: string }): string {
+  const ex = card.example;
+  const range = findClozeMatchRange(ex, card.word);
+  if (range) {
+    const before = esc(ex.slice(0, range.start));
+    const after = esc(ex.slice(range.end));
+    return `${before}<span class="fc-blank">&nbsp;</span>${after}`;
+  }
+  return `${esc(ex)} <div class="small muted" style="margin-top:4px;">(Nghĩa: ${esc(card.meaning)})</div>`;
+}
+
+export function highlightWordInExample(example: string, word: string): string {
+  const range = findClozeMatchRange(example, word);
+  if (range) {
+    return `${esc(example.slice(0, range.start))}<mark>${esc(example.slice(range.start, range.end))}</mark>${esc(example.slice(range.end))}`;
+  }
+  return esc(example);
+}
+
+export function extractDictationErrorPairs(
+  userText: string,
+  targetText: string,
+  maxPairs = 3
+): { wrong: string; right: string }[] {
+  const { tokens } = computeWordDiff(userText, targetText);
+  const pairs: { wrong: string; right: string }[] = [];
+  const seen = new Set<string>();
+
+  const pushPair = (wrong: string, right: string) => {
+    const w = wrong.trim();
+    const r = right.trim();
+    if (!r) return;
+    const key = `${w.toLowerCase()}->${r.toLowerCase()}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    pairs.push({ wrong: w || '(nghe sót)', right: r });
+  };
+
+  let i = 0;
+  while (i < tokens.length && pairs.length < maxPairs) {
+    const cur = tokens[i];
+    const next = tokens[i + 1];
+    if (cur.kind === 'extra' && next?.kind === 'miss') {
+      pushPair(cur.word, next.word);
+      i += 2;
+      continue;
+    }
+    if (cur.kind === 'miss' && next?.kind === 'extra') {
+      pushPair(next.word, cur.word);
+      i += 2;
+      continue;
+    }
+    if (cur.kind === 'miss') {
+      pushPair('(nghe sót)', cur.word);
+    }
+    i += 1;
+  }
+  return pairs;
+}
+
 let cachedVoices: SpeechSynthesisVoice[] = [];
 
 export function initTtsVoices(): void {

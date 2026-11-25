@@ -5,17 +5,23 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::models::{
-    DailyQuest, DashboardState, DictationResultInput, DictationSentence, DictationSubmitResult,
-    ErrorFixQuestion, ErrorLog, Essay, ForgottenVocabCard, MicroCheckAnswerInput, MicroCheckItem,
-    MicroCheckSubmitResult, ParaphrasePair, PracticeScore, QuizAnswerInput, QuizQuestion,
-    QuizSubmitResult, RoadmapItem, Settings, SettingsPublic, SkillBand, SpeakingCue,
-    SpeakingSession, StudyDay, VocabCard, VocabQuizStatus,
+    AutoRefillStatus, DailyQuest, DashboardState, DictationErrorPair, DictationResultInput,
+    DictationSentence, DictationSubmitResult, ErrorDrillQuestion, ErrorDrillResultInput,
+    ErrorDrillSingleResult, ErrorDrillSubmitResult, ErrorFixQuestion, ErrorLog, Essay,
+    ForgottenVocabCard, GradeResult, MicroCheckAnswerInput, MicroCheckItem, MicroCheckSubmitResult,
+    ParaphrasePair, PracticeScore, QuizAnswerInput, QuizQuestion, QuizSubmitResult,
+    RefillPackResult, RoadmapItem, Settings, SettingsPublic, SkillBand, SpeakingCue,
+    SpeakingSession, StudyDay, TopicPackDrill, TopicPackPayload, VocabCard, VocabQuizStatus,
+    WritingPrompt,
 };
 use crate::roadmap_parser::{infer_quest_action_hint, parse_roadmap_markdown, ParsedQuest};
 use crate::seed_data::{
-    default_writing_prompts_for_band, DICTATION_SEEDS, ERROR_LOG_SEEDS_65, ERROR_LOG_SEEDS_80,
-    PARAPHRASE_SEEDS, ROADMAP_SEEDS_65, ROADMAP_SEEDS_80, SPEAKING_SEEDS, VOCAB_SEEDS,
-    VOCAB_SEEDS_80,
+    all_dictation_seeds, all_paraphrase_seeds_65, all_vocab_seeds_65, all_vocab_seeds_80,
+    ERROR_LOG_SEEDS_65, ERROR_LOG_SEEDS_80, ROADMAP_SEEDS_65, ROADMAP_SEEDS_80, SPEAKING_SEEDS,
+};
+use crate::seed_data_v170::{
+    ERROR_DRILL_SEEDS_65, ERROR_DRILL_SEEDS_80, IELTS_TOPICS, PARAPHRASE_SEEDS_80,
+    WRITING_PROMPT_SEEDS,
 };
 use crate::srs::apply_sm2;
 
@@ -343,6 +349,32 @@ pub fn init_schema_and_seed(conn: &Connection, seed_path: Option<&Path>) -> Resu
             avg_accuracy INTEGER NOT NULL,
             wrong_words_json TEXT NOT NULL DEFAULT '[]'
         );
+
+        CREATE TABLE IF NOT EXISTS error_drills (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            error_log_id INTEGER NOT NULL,
+            drill_mode TEXT NOT NULL,
+            context_tag TEXT NOT NULL DEFAULT 'general',
+            stem TEXT NOT NULL,
+            options_json TEXT NOT NULL DEFAULT '[]',
+            answer TEXT NOT NULL,
+            rationale_vi TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'seed'
+        );
+
+        CREATE TABLE IF NOT EXISTS writing_prompts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            level TEXT NOT NULL,
+            task_type TEXT NOT NULL,
+            topic TEXT NOT NULL,
+            title TEXT NOT NULL,
+            prompt_text TEXT NOT NULL,
+            outline_hint TEXT NOT NULL DEFAULT '',
+            target_vocab_json TEXT NOT NULL DEFAULT '[]',
+            source TEXT NOT NULL DEFAULT 'seed',
+            practiced_count INTEGER NOT NULL DEFAULT 0,
+            chart_spec_json TEXT NOT NULL DEFAULT ''
+        );
         "#,
     )
     .map_err(|e| format!("Schema init error: {e}"))?;
@@ -444,6 +476,92 @@ pub fn init_schema_and_seed(conn: &Connection, seed_path: Option<&Path>) -> Resu
         "ALTER TABLE daily_quests ADD COLUMN action_hint TEXT NOT NULL DEFAULT ''",
     )?;
 
+    // v1.7.0 additive migrations (100% backward-compatible)
+    ensure_column_exists(
+        conn,
+        "vocab_cards",
+        "source",
+        "ALTER TABLE vocab_cards ADD COLUMN source TEXT NOT NULL DEFAULT 'seed'",
+    )?;
+    ensure_column_exists(
+        conn,
+        "dictation_sentences",
+        "source",
+        "ALTER TABLE dictation_sentences ADD COLUMN source TEXT NOT NULL DEFAULT 'seed'",
+    )?;
+    ensure_column_exists(
+        conn,
+        "paraphrase_pairs",
+        "level",
+        "ALTER TABLE paraphrase_pairs ADD COLUMN level TEXT NOT NULL DEFAULT '6.5'",
+    )?;
+    ensure_column_exists(
+        conn,
+        "paraphrase_pairs",
+        "source",
+        "ALTER TABLE paraphrase_pairs ADD COLUMN source TEXT NOT NULL DEFAULT 'seed'",
+    )?;
+    ensure_column_exists(
+        conn,
+        "error_logs",
+        "drill_mode",
+        "ALTER TABLE error_logs ADD COLUMN drill_mode TEXT NOT NULL DEFAULT 'GRAMMAR_MCQ'",
+    )?;
+    ensure_column_exists(
+        conn,
+        "error_logs",
+        "status",
+        "ALTER TABLE error_logs ADD COLUMN status TEXT NOT NULL DEFAULT 'active'",
+    )?;
+    ensure_column_exists(
+        conn,
+        "error_logs",
+        "streak_distinct",
+        "ALTER TABLE error_logs ADD COLUMN streak_distinct INTEGER NOT NULL DEFAULT 0",
+    )?;
+    ensure_column_exists(
+        conn,
+        "error_logs",
+        "last_drill_id",
+        "ALTER TABLE error_logs ADD COLUMN last_drill_id INTEGER NOT NULL DEFAULT 0",
+    )?;
+    ensure_column_exists(
+        conn,
+        "error_logs",
+        "last_context_tag",
+        "ALTER TABLE error_logs ADD COLUMN last_context_tag TEXT NOT NULL DEFAULT ''",
+    )?;
+    ensure_column_exists(
+        conn,
+        "error_logs",
+        "source",
+        "ALTER TABLE error_logs ADD COLUMN source TEXT NOT NULL DEFAULT 'user'",
+    )?;
+    ensure_column_exists(
+        conn,
+        "writing_prompts",
+        "chart_spec_json",
+        "ALTER TABLE writing_prompts ADD COLUMN chart_spec_json TEXT NOT NULL DEFAULT ''",
+    )?;
+    ensure_column_exists(
+        conn,
+        "settings",
+        "auto_refill_enabled",
+        "ALTER TABLE settings ADD COLUMN auto_refill_enabled INTEGER NOT NULL DEFAULT 1",
+    )?;
+    ensure_column_exists(
+        conn,
+        "settings",
+        "last_ai_refill_at",
+        "ALTER TABLE settings ADD COLUMN last_ai_refill_at TEXT NOT NULL DEFAULT ''",
+    )?;
+    ensure_column_exists(
+        conn,
+        "settings",
+        "last_ai_refill_topic",
+        "ALTER TABLE settings ADD COLUMN last_ai_refill_topic TEXT NOT NULL DEFAULT ''",
+    )?;
+
     // Backward-compatible theme migration
     let _ = conn.execute(
         "UPDATE settings SET theme = 'mono-dark' WHERE id = 1 AND theme = 'dark'",
@@ -460,14 +578,43 @@ pub fn init_schema_and_seed(conn: &Connection, seed_path: Option<&Path>) -> Resu
 
     let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
 
+    let target_band: f64 = conn
+        .query_row(
+            "SELECT COALESCE(target_band, 7.0) FROM settings WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(7.0);
+    let is_80 = target_band >= 7.5;
+
     let vocab_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM vocab_cards", [], |r| r.get(0))
         .map_err(|e| e.to_string())?;
     if vocab_count == 0 {
-        for v in VOCAB_SEEDS {
+        let initial_vocab = if is_80 {
+            all_vocab_seeds_80()
+        } else {
+            all_vocab_seeds_65()
+        };
+        for v in initial_vocab {
             conn.execute(
-                "INSERT INTO vocab_cards (track, topic, word, meaning, example, ease, interval_days, reps, due_date)
-                 VALUES ('ielts', ?1, ?2, ?3, ?4, 2.5, 0, 0, ?5)",
+                "INSERT INTO vocab_cards (track, topic, word, meaning, example, ease, interval_days, reps, due_date, source)
+                 VALUES ('ielts', ?1, ?2, ?3, ?4, 2.5, 0, 0, ?5, 'seed')",
+                params![v.topic, v.word, v.meaning, v.example, today],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    } else {
+        let extra_vocab = if is_80 {
+            crate::seed_data_v170::VOCAB_SEEDS_80_EXTRA
+        } else {
+            crate::seed_data_v170::VOCAB_SEEDS_65_EXTRA
+        };
+        for v in extra_vocab {
+            conn.execute(
+                "INSERT INTO vocab_cards (track, topic, word, meaning, example, ease, interval_days, reps, due_date, source)
+                 SELECT 'ielts', ?1, ?2, ?3, ?4, 2.5, 0, 0, ?5, 'seed'
+                 WHERE NOT EXISTS (SELECT 1 FROM vocab_cards WHERE lower(word) = lower(?2))",
                 params![v.topic, v.word, v.meaning, v.example, today],
             )
             .map_err(|e| e.to_string())?;
@@ -511,34 +658,80 @@ pub fn init_schema_and_seed(conn: &Connection, seed_path: Option<&Path>) -> Resu
         .query_row("SELECT COUNT(*) FROM error_logs", [], |r| r.get(0))
         .map_err(|e| e.to_string())?;
     if err_count == 0 {
-        for e in ERROR_LOG_SEEDS_65 {
+        let seeds = if is_80 { ERROR_LOG_SEEDS_80 } else { ERROR_LOG_SEEDS_65 };
+        let src = if is_80 { "seed_80" } else { "seed_65" };
+        for e in seeds {
             conn.execute(
-                "INSERT INTO error_logs (category, wrong_text, right_text, count, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![e.category, e.wrong_text, e.right_text, e.count, today],
+                "INSERT INTO error_logs (category, wrong_text, right_text, count, created_at, drill_mode, status, streak_distinct, source)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'active', 0, ?7)",
+                params![e.category, e.wrong_text, e.right_text, e.count, today, e.drill_mode, src],
             )
             .map_err(|e| e.to_string())?;
         }
+    } else {
+        // Backfill drill_mode & source for upgraded DBs matching seed errors
+        for e in ERROR_LOG_SEEDS_65 {
+            let _ = conn.execute(
+                "UPDATE error_logs SET drill_mode = ?1, source = 'seed_65'
+                 WHERE wrong_text = ?2 AND right_text = ?3 AND COALESCE(source, 'user') = 'user'",
+                params![e.drill_mode, e.wrong_text, e.right_text],
+            );
+        }
+        for e in ERROR_LOG_SEEDS_80 {
+            let _ = conn.execute(
+                "UPDATE error_logs SET drill_mode = ?1, source = 'seed_80'
+                 WHERE wrong_text = ?2 AND right_text = ?3 AND COALESCE(source, 'user') = 'user'",
+                params![e.drill_mode, e.wrong_text, e.right_text],
+            );
+        }
     }
+    ensure_seed_error_drills(conn)?;
 
-    // v1.6.0 seeds via WHERE NOT EXISTS (safe for migrated v1.5.0 DBs)
-    for p in PARAPHRASE_SEEDS {
+    // v1.6.0 + v1.7.0 seeds via WHERE NOT EXISTS (safe for migrated DBs)
+    for p in all_paraphrase_seeds_65() {
         conn.execute(
-            "INSERT INTO paraphrase_pairs (question_term, passage_paraphrase, source_type, trap_note, created_at)
-             SELECT ?1, ?2, ?3, ?4, ?5
+            "INSERT INTO paraphrase_pairs (question_term, passage_paraphrase, source_type, trap_note, created_at, level, source)
+             SELECT ?1, ?2, ?3, ?4, ?5, '6.5', 'seed'
+             WHERE NOT EXISTS (SELECT 1 FROM paraphrase_pairs WHERE lower(question_term) = lower(?1) AND lower(passage_paraphrase) = lower(?2))",
+            params![p.question_term, p.passage_paraphrase, p.source_type, p.trap_note, today],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    for p in PARAPHRASE_SEEDS_80 {
+        conn.execute(
+            "INSERT INTO paraphrase_pairs (question_term, passage_paraphrase, source_type, trap_note, created_at, level, source)
+             SELECT ?1, ?2, ?3, ?4, ?5, '8.0', 'seed'
              WHERE NOT EXISTS (SELECT 1 FROM paraphrase_pairs WHERE lower(question_term) = lower(?1) AND lower(passage_paraphrase) = lower(?2))",
             params![p.question_term, p.passage_paraphrase, p.source_type, p.trap_note, today],
         )
         .map_err(|e| e.to_string())?;
     }
 
-    for d in DICTATION_SEEDS {
+    for d in all_dictation_seeds() {
         conn.execute(
-            "INSERT INTO dictation_sentences (level, section, trap_focus, sentence, meaning_vi)
-             SELECT ?1, ?2, ?3, ?4, ?5
+            "INSERT INTO dictation_sentences (level, section, trap_focus, sentence, meaning_vi, source)
+             SELECT ?1, ?2, ?3, ?4, ?5, 'seed'
              WHERE NOT EXISTS (SELECT 1 FROM dictation_sentences WHERE lower(sentence) = lower(?4))",
             params![d.level, d.section, d.trap_focus, d.sentence, d.meaning_vi],
         )
         .map_err(|e| e.to_string())?;
+    }
+
+    for wp in WRITING_PROMPT_SEEDS {
+        let tv_json = serde_json::to_string(&wp.target_vocab).unwrap_or_else(|_| "[]".to_string());
+        conn.execute(
+            "INSERT INTO writing_prompts (level, task_type, topic, title, prompt_text, outline_hint, target_vocab_json, source, practiced_count, chart_spec_json)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, 'seed', 0, ?8
+             WHERE NOT EXISTS (SELECT 1 FROM writing_prompts WHERE level = ?1 AND title = ?4)",
+            params![wp.level, wp.task_type, wp.topic, wp.title, wp.prompt_text, wp.outline_hint, tv_json, wp.chart_spec_json],
+        )
+        .map_err(|e| e.to_string())?;
+        if !wp.chart_spec_json.is_empty() {
+            let _ = conn.execute(
+                "UPDATE writing_prompts SET chart_spec_json = ?1 WHERE level = ?2 AND title = ?3 AND trim(chart_spec_json) = ''",
+                params![wp.chart_spec_json, wp.level, wp.title],
+            );
+        }
     }
 
     for s in SPEAKING_SEEDS {
@@ -555,6 +748,39 @@ pub fn init_schema_and_seed(conn: &Connection, seed_path: Option<&Path>) -> Resu
     }
 
     ensure_today_quests(conn, &today)?;
+    Ok(())
+}
+
+fn ensure_seed_error_drills(conn: &Connection) -> Result<(), String> {
+    for drill in ERROR_DRILL_SEEDS_65.iter().chain(ERROR_DRILL_SEEDS_80.iter()) {
+        let error_id: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM error_logs WHERE wrong_text = ?1 LIMIT 1",
+                params![drill.seed_wrong_text],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        let Some(eid) = error_id else {
+            continue;
+        };
+        let opts_json = serde_json::to_string(&drill.options).unwrap_or_else(|_| "[]".to_string());
+        conn.execute(
+            "INSERT INTO error_drills (error_log_id, drill_mode, context_tag, stem, options_json, answer, rationale_vi, source)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, 'seed'
+             WHERE NOT EXISTS (SELECT 1 FROM error_drills WHERE error_log_id = ?1 AND stem = ?4)",
+            params![
+                eid,
+                drill.drill_mode,
+                drill.context_tag,
+                drill.stem,
+                opts_json,
+                drill.answer,
+                drill.rationale_vi
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
@@ -754,7 +980,10 @@ pub fn get_settings_raw(conn: &Connection) -> Result<Settings, String> {
     conn.query_row(
         "SELECT theme, gemini_api_key, gemini_model, exam_date, reminder_time, autostart, target_band,
                 onboarding_done, writing_checklist_json, writing_focus_json, skill_targets_json, phase_labels_json,
-                COALESCE(tts_accent, 'en-GB')
+                COALESCE(tts_accent, 'en-GB'),
+                COALESCE(auto_refill_enabled, 1),
+                COALESCE(last_ai_refill_at, ''),
+                COALESCE(last_ai_refill_topic, '')
          FROM settings WHERE id = 1",
         [],
         |r| {
@@ -800,6 +1029,9 @@ pub fn get_settings_raw(conn: &Connection) -> Result<Settings, String> {
                 writing_focus_notes,
                 skill_targets,
                 phase_labels,
+                auto_refill_enabled: r.get::<_, i64>(13)? != 0,
+                last_ai_refill_at: r.get(14)?,
+                last_ai_refill_topic: r.get(15)?,
             })
         },
     )
@@ -822,6 +1054,9 @@ pub fn get_settings_public(conn: &Connection) -> Result<SettingsPublic, String> 
         writing_checklist: s.writing_checklist,
         writing_focus_notes: s.writing_focus_notes,
         phase_labels: s.phase_labels,
+        auto_refill_enabled: s.auto_refill_enabled,
+        last_ai_refill_at: s.last_ai_refill_at,
+        last_ai_refill_topic: s.last_ai_refill_topic,
     })
 }
 
@@ -842,6 +1077,7 @@ pub fn update_settings(
     target_band: Option<f64>,
     onboarding_done: Option<bool>,
     tts_accent: Option<String>,
+    auto_refill_enabled: Option<bool>,
 ) -> Result<SettingsPublic, String> {
     let cur = get_settings_raw(conn)?;
     let new_theme = theme
@@ -867,11 +1103,13 @@ pub fn update_settings(
     let new_accent = tts_accent
         .map(|a| normalize_tts_accent(&a))
         .unwrap_or(cur.tts_accent);
+    let new_auto_refill = auto_refill_enabled.unwrap_or(cur.auto_refill_enabled);
 
     conn.execute(
         "UPDATE settings
          SET theme = ?1, gemini_api_key = ?2, gemini_model = ?3, exam_date = ?4,
-             reminder_time = ?5, autostart = ?6, target_band = ?7, onboarding_done = ?8, tts_accent = ?9
+             reminder_time = ?5, autostart = ?6, target_band = ?7, onboarding_done = ?8, tts_accent = ?9,
+             auto_refill_enabled = ?10
          WHERE id = 1",
         params![
             new_theme,
@@ -882,7 +1120,8 @@ pub fn update_settings(
             if new_auto { 1 } else { 0 },
             new_target,
             if new_onboarding { 1 } else { 0 },
-            new_accent
+            new_accent,
+            if new_auto_refill { 1 } else { 0 }
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -1069,6 +1308,7 @@ fn map_vocab_card(r: &rusqlite::Row<'_>) -> rusqlite::Result<VocabCard> {
         lapses: r.get::<_, i64>(10)?,
         hidden: r.get::<_, i64>(11)? != 0,
         is_user_card: r.get::<_, i64>(12)? != 0,
+        source: r.get::<_, Option<String>>(13)?.unwrap_or_else(|| "seed".to_string()),
     })
 }
 
@@ -1088,14 +1328,14 @@ pub fn get_due_vocab(
     let leech_only = only_leech.unwrap_or(false);
     let order_sql = if leech_only {
         "SELECT id, track, topic, word, meaning, example, ease, interval_days, reps, due_date,
-                COALESCE(lapses, 0), COALESCE(hidden, 0), COALESCE(is_user_card, 0)
+                COALESCE(lapses, 0), COALESCE(hidden, 0), COALESCE(is_user_card, 0), COALESCE(source, 'seed')
          FROM vocab_cards
          WHERE COALESCE(hidden, 0) = 0 AND COALESCE(lapses, 0) >= 3
          ORDER BY lapses DESC, due_date ASC, id DESC
          LIMIT 40"
     } else if target_band >= 7.5 {
         "SELECT id, track, topic, word, meaning, example, ease, interval_days, reps, due_date,
-                COALESCE(lapses, 0), COALESCE(hidden, 0), COALESCE(is_user_card, 0)
+                COALESCE(lapses, 0), COALESCE(hidden, 0), COALESCE(is_user_card, 0), COALESCE(source, 'seed')
          FROM vocab_cards
          WHERE due_date <= ?1 AND COALESCE(hidden, 0) = 0
          ORDER BY COALESCE(is_user_card, 0) DESC,
@@ -1105,7 +1345,7 @@ pub fn get_due_vocab(
          LIMIT 40"
     } else {
         "SELECT id, track, topic, word, meaning, example, ease, interval_days, reps, due_date,
-                COALESCE(lapses, 0), COALESCE(hidden, 0), COALESCE(is_user_card, 0)
+                COALESCE(lapses, 0), COALESCE(hidden, 0), COALESCE(is_user_card, 0), COALESCE(source, 'seed')
          FROM vocab_cards
          WHERE due_date <= ?1 AND COALESCE(hidden, 0) = 0
          ORDER BY COALESCE(is_user_card, 0) DESC,
@@ -1160,20 +1400,55 @@ pub fn add_vocab_card(
     };
 
     conn.execute(
-        "INSERT INTO vocab_cards (track, topic, word, meaning, example, ease, interval_days, reps, due_date, lapses, hidden, is_user_card)
-         VALUES ('ielts', ?1, ?2, ?3, ?4, 2.5, 0, 0, ?5, 0, 0, 1)",
+        "INSERT INTO vocab_cards (track, topic, word, meaning, example, ease, interval_days, reps, due_date, lapses, hidden, is_user_card, source)
+         VALUES ('ielts', ?1, ?2, ?3, ?4, 2.5, 0, 0, ?5, 0, 0, 1, 'user')",
         params![tp, w, m, ex, today],
     )
     .map_err(|e| e.to_string())?;
     let id = conn.last_insert_rowid();
     conn.query_row(
         "SELECT id, track, topic, word, meaning, example, ease, interval_days, reps, due_date,
-                COALESCE(lapses, 0), COALESCE(hidden, 0), COALESCE(is_user_card, 0)
+                COALESCE(lapses, 0), COALESCE(hidden, 0), COALESCE(is_user_card, 0), COALESCE(source, 'seed')
          FROM vocab_cards WHERE id = ?1",
         params![id],
         map_vocab_card,
     )
     .map_err(|e| e.to_string())
+}
+
+fn sentence_contains_vocab_root(sentence: &str, card_word: &str) -> bool {
+    let sent_low = sentence.to_lowercase();
+    let primary = card_word
+        .split('(')
+        .next()
+        .unwrap_or(card_word)
+        .split('/')
+        .next()
+        .unwrap_or(card_word)
+        .trim()
+        .to_lowercase();
+    if primary.is_empty() {
+        return true;
+    }
+    if sent_low.contains(&primary) {
+        return true;
+    }
+    let words: Vec<&str> = primary
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    if words.is_empty() {
+        return true;
+    }
+    // Check main content word (longest or first >= 4 chars) with >=4 char stem
+    let target = words
+        .iter()
+        .max_by_key(|w| w.len())
+        .copied()
+        .unwrap_or(words[0]);
+    let stem_len = target.chars().count().min(4);
+    let stem: String = target.chars().take(stem_len).collect();
+    !stem.is_empty() && sent_low.contains(&stem)
 }
 
 pub fn cure_leech_card(
@@ -1186,20 +1461,34 @@ pub fn cure_leech_card(
     if sent.len() < 6 {
         return Err("Hãy đặt 1 câu tiếng Anh trọn vẹn (tối thiểu 6 ký tự) chứa từ này.".to_string());
     }
-    let updated = conn
-        .execute(
-            "UPDATE vocab_cards
-             SET example = ?1, lapses = 0, reps = 0, interval_days = 0, due_date = ?2, is_user_card = 1
-             WHERE id = ?3",
-            params![sent, today, card_id],
+    let card_word: Option<String> = conn
+        .query_row(
+            "SELECT word FROM vocab_cards WHERE id = ?1",
+            params![card_id],
+            |r| r.get(0),
         )
+        .optional()
         .map_err(|e| e.to_string())?;
-    if updated == 0 {
+    let Some(word) = card_word else {
         return Err("Không tìm thấy thẻ từ vựng cần chữa.".to_string());
+    };
+    if !sentence_contains_vocab_root(sent, &word) {
+        let short_w = word.split('(').next().unwrap_or(&word).trim();
+        return Err(format!(
+            "Câu mới cần chứa từ/cụm từ \"{short_w}\" (hoặc dạng chia từ của nó) để lưu thành thẻ Cloze."
+        ));
     }
+
+    conn.execute(
+        "UPDATE vocab_cards
+         SET example = ?1, lapses = 0, reps = 0, interval_days = 0, due_date = ?2, is_user_card = 1
+         WHERE id = ?3",
+        params![sent, today, card_id],
+    )
+    .map_err(|e| e.to_string())?;
     conn.query_row(
         "SELECT id, track, topic, word, meaning, example, ease, interval_days, reps, due_date,
-                COALESCE(lapses, 0), COALESCE(hidden, 0), COALESCE(is_user_card, 0)
+                COALESCE(lapses, 0), COALESCE(hidden, 0), COALESCE(is_user_card, 0), COALESCE(source, 'seed')
          FROM vocab_cards WHERE id = ?1",
         params![card_id],
         map_vocab_card,
@@ -1246,7 +1535,7 @@ fn shuffle_slice<T>(items: &mut [T], seed: &mut u64) {
 }
 
 fn make_cloze_sentence(example: &str, word: &str) -> Option<String> {
-    let clean_word = word.trim();
+    let clean_word = word.split('(').next().unwrap_or(word).split('/').next().unwrap_or(word).trim();
     if clean_word.is_empty() {
         return None;
     }
@@ -1259,6 +1548,42 @@ fn make_cloze_sentence(example: &str, word: &str) -> Option<String> {
             out.push_str("________");
             out.push_str(&example[byte_idx + w_lower.len()..]);
             return Some(out);
+        }
+    }
+    // Try inflected first word (e.g. "play a pivotal role in" -> "plays a pivotal role in")
+    let parts: Vec<&str> = w_lower.split_whitespace().collect();
+    if !parts.is_empty() {
+        let first = parts[0];
+        let rest = if parts.len() > 1 {
+            format!(" {}", parts[1..].join(" "))
+        } else {
+            String::new()
+        };
+        let mut variants = vec![
+            format!("{first}s{rest}"),
+            format!("{first}es{rest}"),
+            format!("{first}ed{rest}"),
+            format!("{first}d{rest}"),
+            format!("{first}ing{rest}"),
+        ];
+        if let Some(stem) = first.strip_suffix('e') {
+            variants.push(format!("{stem}ing{rest}"));
+            variants.push(format!("{stem}ed{rest}"));
+        }
+        if let Some(stem) = first.strip_suffix('y') {
+            variants.push(format!("{stem}ies{rest}"));
+            variants.push(format!("{stem}ied{rest}"));
+        }
+        for v in variants {
+            if let Some(byte_idx) = ex_lower.find(&v) {
+                if example.is_char_boundary(byte_idx) && example.is_char_boundary(byte_idx + v.len()) {
+                    let mut out = String::with_capacity(example.len());
+                    out.push_str(&example[..byte_idx]);
+                    out.push_str("________");
+                    out.push_str(&example[byte_idx + v.len()..]);
+                    return Some(out);
+                }
+            }
         }
     }
     None
@@ -1413,7 +1738,7 @@ pub fn generate_vocab_quiz(
     let mut stmt = conn
         .prepare(
             "SELECT id, track, topic, word, meaning, example, ease, interval_days, reps, due_date,
-                    COALESCE(lapses, 0), COALESCE(hidden, 0), COALESCE(is_user_card, 0)
+                    COALESCE(lapses, 0), COALESCE(hidden, 0), COALESCE(is_user_card, 0), COALESCE(source, 'seed')
              FROM vocab_cards
              WHERE COALESCE(hidden, 0) = 0",
         )
@@ -1705,7 +2030,7 @@ pub fn review_vocab_card(
     let card: VocabCard = conn
         .query_row(
             "SELECT id, track, topic, word, meaning, example, ease, interval_days, reps, due_date,
-                    COALESCE(lapses, 0), COALESCE(hidden, 0), COALESCE(is_user_card, 0)
+                    COALESCE(lapses, 0), COALESCE(hidden, 0), COALESCE(is_user_card, 0), COALESCE(source, 'seed')
              FROM vocab_cards WHERE id = ?1",
             params![card_id],
             map_vocab_card,
@@ -1733,6 +2058,7 @@ pub fn review_vocab_card(
 
     let today_str = today.format("%Y-%m-%d").to_string();
     adjust_study_day(conn, &today_str, 1, 0)?;
+    let _ = auto_tick_quest_by_hint(conn, &today_str, "srs")?;
 
     Ok(VocabCard {
         ease: outcome.ease,
@@ -1742,6 +2068,414 @@ pub fn review_vocab_card(
         lapses: new_lapses,
         ..card
     })
+}
+
+pub fn generate_error_drills(
+    conn: &Connection,
+    count: Option<i64>,
+) -> Result<Vec<ErrorDrillQuestion>, String> {
+    let limit = count.unwrap_or(5).clamp(1, 20) as usize;
+    let mut seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(987654321);
+
+    let mut e_stmt = conn
+        .prepare(
+            "SELECT id, category, wrong_text, right_text, count, created_at,
+                    COALESCE(drill_mode, 'GRAMMAR_MCQ'), COALESCE(status, 'active'),
+                    COALESCE(streak_distinct, 0), COALESCE(last_drill_id, 0),
+                    COALESCE(last_context_tag, '')
+             FROM error_logs
+             WHERE EXISTS (SELECT 1 FROM error_drills d WHERE d.error_log_id = error_logs.id)
+             ORDER BY (CASE WHEN COALESCE(status, 'active') = 'active' THEN 0 ELSE 1 END) ASC,
+                      count DESC, COALESCE(streak_distinct, 0) ASC, id ASC
+             LIMIT 30",
+        )
+        .map_err(|e| e.to_string())?;
+
+    struct ErrRow {
+        id: i64,
+        category: String,
+        wrong_text: String,
+        right_text: String,
+        streak_distinct: i64,
+        status: String,
+        last_drill_id: i64,
+        last_context_tag: String,
+    }
+
+    let err_rows: Vec<ErrRow> = e_stmt
+        .query_map([], |r| {
+            Ok(ErrRow {
+                id: r.get(0)?,
+                category: r.get(1)?,
+                wrong_text: r.get(2)?,
+                right_text: r.get(3)?,
+                streak_distinct: r.get(8)?,
+                status: r.get(7)?,
+                last_drill_id: r.get(9)?,
+                last_context_tag: r.get(10)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    let mut out = Vec::new();
+    for er in err_rows {
+        if out.len() >= limit {
+            break;
+        }
+        let mut d_stmt = conn
+            .prepare(
+                "SELECT id, drill_mode, context_tag, stem, options_json, answer, rationale_vi, COALESCE(source, 'seed')
+                 FROM error_drills
+                 WHERE error_log_id = ?1
+                 ORDER BY
+                   (CASE WHEN id != ?2 AND context_tag != ?3 THEN 0
+                         WHEN id != ?2 THEN 1
+                         ELSE 2 END) ASC,
+                   id ASC",
+            )
+            .map_err(|e| e.to_string())?;
+        let drills: Vec<(i64, String, String, String, String, String, String, String)> = d_stmt
+            .query_map(params![er.id, er.last_drill_id, er.last_context_tag], |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                    r.get(7)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+
+        if let Some((drill_id, drill_mode, context_tag, stem, opts_json, answer, rationale_vi, source)) = drills.into_iter().next() {
+            let mut options: Vec<String> = serde_json::from_str(&opts_json).unwrap_or_default();
+            let is_tfng = options.len() == 3
+                && options.iter().any(|o| o == "TRUE")
+                && options.iter().any(|o| o == "FALSE")
+                && options.iter().any(|o| o == "NOT GIVEN");
+            if options.len() >= 2 && !is_tfng {
+                shuffle_slice(&mut options, &mut seed);
+            }
+            out.push(ErrorDrillQuestion {
+                drill_id,
+                error_log_id: er.id,
+                category: er.category,
+                drill_mode,
+                context_tag,
+                stem,
+                options,
+                answer,
+                rationale_vi,
+                wrong_text: er.wrong_text,
+                right_text: er.right_text,
+                streak_distinct: er.streak_distinct,
+                status: er.status,
+                source,
+            });
+        }
+    }
+    Ok(out)
+}
+
+fn apply_error_drill_outcome(
+    conn: &Connection,
+    error_log_id: i64,
+    drill_id: i64,
+    context_tag: &str,
+    correct: bool,
+) -> Result<(ErrorDrillSingleResult, String), String> {
+    let row: Option<(i64, String, String, String)> = conn
+        .query_row(
+            "SELECT COALESCE(streak_distinct, 0), COALESCE(status, 'active'), COALESCE(last_context_tag, ''), category
+             FROM error_logs WHERE id = ?1",
+            params![error_log_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let Some((cur_streak, cur_status, prev_ctx, category)) = row else {
+        return Err("Không tìm thấy mục Sổ lỗi tương ứng.".to_string());
+    };
+
+    let clean_ctx = context_tag.trim();
+    let (new_streak, new_status, newly_mastered) = if correct {
+        let next_streak = cur_streak + 1;
+        let distinct_available: i64 = conn
+            .query_row(
+                "SELECT COUNT(DISTINCT context_tag) FROM error_drills WHERE error_log_id = ?1",
+                params![error_log_id],
+                |r| r.get(0),
+            )
+            .unwrap_or(1);
+        let ctx_ok = if distinct_available >= 2 && !prev_ctx.is_empty() {
+            prev_ctx != clean_ctx || cur_streak >= 2
+        } else {
+            true
+        };
+        let became_mastered = next_streak >= 3 && ctx_ok;
+        let next_status = if became_mastered {
+            "mastered".to_string()
+        } else {
+            cur_status.clone()
+        };
+        (
+            next_streak,
+            next_status.clone(),
+            became_mastered && cur_status != "mastered",
+        )
+    } else {
+        (0, "active".to_string(), false)
+    };
+
+    conn.execute(
+        "UPDATE error_logs
+         SET streak_distinct = ?1, status = ?2, last_drill_id = ?3, last_context_tag = ?4
+         WHERE id = ?5",
+        params![new_streak, new_status, drill_id, clean_ctx, error_log_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok((
+        ErrorDrillSingleResult {
+            error_log_id,
+            streak_distinct: new_streak,
+            status: new_status,
+            newly_mastered,
+        },
+        category,
+    ))
+}
+
+pub fn submit_error_drill_result(
+    conn: &Connection,
+    error_log_id: i64,
+    drill_id: i64,
+    context_tag: &str,
+    correct: bool,
+) -> Result<ErrorDrillSingleResult, String> {
+    let (res, _) = apply_error_drill_outcome(conn, error_log_id, drill_id, context_tag, correct)?;
+    Ok(res)
+}
+
+pub fn submit_error_drill_session(
+    conn: &Connection,
+    results: Vec<ErrorDrillResultInput>,
+    today: NaiveDate,
+) -> Result<ErrorDrillSubmitResult, String> {
+    let today_str = today.format("%Y-%m-%d").to_string();
+    let total_questions = results.len() as i64;
+    let mut correct_count = 0_i64;
+    let mut newly_mastered: Vec<String> = Vec::new();
+
+    for r in &results {
+        if r.correct {
+            correct_count += 1;
+        }
+        if let Ok((outcome, cat)) =
+            apply_error_drill_outcome(conn, r.error_log_id, r.drill_id, &r.context_tag, r.correct)
+        {
+            if outcome.newly_mastered && !newly_mastered.contains(&cat) {
+                newly_mastered.push(cat);
+            }
+        }
+    }
+
+    let mut marked_quest_done = auto_tick_quest_by_hint(conn, &today_str, "quiz")?;
+    if !marked_quest_done {
+        let updated = conn
+            .execute(
+                "UPDATE daily_quests SET done = 1
+                 WHERE date = ?1 AND track = 'ielts' AND done = 0
+                   AND COALESCE(tier, 'core') = 'core' AND lower(title) LIKE '%quiz%'",
+                params![today_str],
+            )
+            .map_err(|e| e.to_string())?;
+        if updated > 0 {
+            marked_quest_done = true;
+            let qd: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM daily_quests WHERE date = ?1 AND track = 'ielts' AND done = 1 AND COALESCE(tier, 'core') = 'core'",
+                    params![today_str],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+            let _ = conn.execute(
+                "UPDATE study_days SET quests_done = ?1 WHERE date = ?2",
+                params![qd, today_str],
+            );
+        }
+    }
+    adjust_study_day(conn, &today_str, 5, 0)?;
+
+    let accuracy_pct = if total_questions > 0 {
+        ((correct_count * 100) + (total_questions / 2)) / total_questions
+    } else {
+        0
+    };
+
+    Ok(ErrorDrillSubmitResult {
+        total_questions,
+        correct_count,
+        accuracy_pct,
+        newly_mastered,
+        marked_quest_done,
+    })
+}
+
+fn blank_word_in_sentence(sentence: &str, target: &str) -> String {
+    let t = target.trim();
+    if t.is_empty() {
+        return format!("{sentence} (________)");
+    }
+    let s_low = sentence.to_lowercase();
+    let t_low = t.to_lowercase();
+    let mut start = 0;
+    while let Some(rel) = s_low[start..].find(&t_low) {
+        let idx = start + rel;
+        let end = idx + t_low.len();
+        let left_ok = idx == 0
+            || !sentence[..idx]
+                .chars()
+                .next_back()
+                .map(|c| c.is_alphanumeric())
+                .unwrap_or(false);
+        let right_ok = end == sentence.len()
+            || !sentence[end..]
+                .chars()
+                .next()
+                .map(|c| c.is_alphanumeric())
+                .unwrap_or(false);
+        if left_ok && right_ok && sentence.is_char_boundary(idx) && sentence.is_char_boundary(end) {
+            return format!("{}________{}", &sentence[..idx], &sentence[end..]);
+        }
+        start = idx + 1;
+        if start >= s_low.len() {
+            break;
+        }
+    }
+    format!("{sentence} [điền từ nghe đúng: ________]")
+}
+
+pub fn log_dictation_errors(
+    conn: &Connection,
+    sentence_id: i64,
+    trap_focus: &str,
+    sentence: &str,
+    pairs: Vec<DictationErrorPair>,
+) -> Result<(), String> {
+    let ctx_tag = format!("dictation-{sentence_id}");
+    let now = Local::now().format("%Y-%m-%d").to_string();
+
+    for pair in pairs.into_iter().take(3) {
+        let right = pair.right.trim();
+        if right.is_empty() {
+            continue;
+        }
+        let wrong = if pair.wrong.trim().is_empty() {
+            "(nghe sót)"
+        } else {
+            pair.wrong.trim()
+        };
+
+        let existing_id: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM error_logs WHERE lower(wrong_text) = lower(?1) AND lower(right_text) = lower(?2)",
+                params![wrong, right],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+
+        let error_log_id = if let Some(id) = existing_id {
+            conn.execute(
+                "UPDATE error_logs SET count = count + 1, status = 'active', streak_distinct = 0, drill_mode = 'TYPING' WHERE id = ?1",
+                params![id],
+            )
+            .map_err(|e| e.to_string())?;
+            id
+        } else {
+            conn.execute(
+                "INSERT INTO error_logs (category, wrong_text, right_text, count, created_at, drill_mode, status, streak_distinct, source)
+                 VALUES ('Listening · Chính tả', ?1, ?2, 1, ?3, 'TYPING', 'active', 0, 'dictation')",
+                params![wrong, right, now],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.last_insert_rowid()
+        };
+
+        let stem = blank_word_in_sentence(sentence, right);
+        let rationale = format!(
+            "Bẫy {}: nghe rõ âm cuối/chính tả của \"{}\".",
+            if trap_focus.trim().is_empty() {
+                "Listening"
+            } else {
+                trap_focus.trim()
+            },
+            right
+        );
+        conn.execute(
+            "INSERT INTO error_drills (error_log_id, drill_mode, context_tag, stem, options_json, answer, rationale_vi, source)
+             SELECT ?1, 'TYPING', ?2, ?3, '[]', ?4, ?5, 'dictation'
+             WHERE NOT EXISTS (SELECT 1 FROM error_drills WHERE error_log_id = ?1 AND lower(answer) = lower(?4) AND stem = ?3)",
+            params![error_log_id, ctx_tag, stem, right, rationale],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+pub fn insert_ai_drills_for_error(
+    conn: &Connection,
+    error_log_id: i64,
+    drills: &[TopicPackDrill],
+) -> Result<i64, String> {
+    let mut added = 0_i64;
+    for d in drills {
+        let stem = d.stem.trim();
+        let answer = d.answer.trim();
+        if stem.is_empty() || answer.is_empty() {
+            continue;
+        }
+        let mode = match d.drill_mode.trim() {
+            "TYPING" | "MINI_CASE" => d.drill_mode.trim(),
+            _ => "GRAMMAR_MCQ",
+        };
+        let mut opts = d.options.clone();
+        if mode != "TYPING" {
+            if opts.len() < 3 || !opts.iter().any(|o| o.trim() == answer) {
+                continue;
+            }
+        } else {
+            opts.clear();
+        }
+        let ctx = if d.context_tag.trim().is_empty() {
+            "general"
+        } else {
+            d.context_tag.trim()
+        };
+        let opts_json = serde_json::to_string(&opts).unwrap_or_else(|_| "[]".to_string());
+        let changed = conn
+            .execute(
+                "INSERT INTO error_drills (error_log_id, drill_mode, context_tag, stem, options_json, answer, rationale_vi, source)
+                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, 'gemini_cache'
+                 WHERE NOT EXISTS (SELECT 1 FROM error_drills WHERE error_log_id = ?1 AND stem = ?4)",
+                params![error_log_id, mode, ctx, stem, opts_json, answer, d.rationale_vi.trim()],
+            )
+            .map_err(|e| e.to_string())?;
+        if changed > 0 {
+            added += 1;
+        }
+    }
+    Ok(added)
 }
 
 pub fn generate_error_fix_quiz(
@@ -1784,7 +2518,7 @@ pub fn generate_micro_check(conn: &Connection) -> Result<Vec<MicroCheckItem>, St
     let mut v_stmt = conn
         .prepare(
             "SELECT id, track, topic, word, meaning, example, ease, interval_days, reps, due_date,
-                    COALESCE(lapses, 0), COALESCE(hidden, 0), COALESCE(is_user_card, 0)
+                    COALESCE(lapses, 0), COALESCE(hidden, 0), COALESCE(is_user_card, 0), COALESCE(source, 'seed')
              FROM vocab_cards
              WHERE COALESCE(hidden, 0) = 0
              ORDER BY COALESCE(lapses, 0) DESC, ease ASC, reps ASC, id ASC",
@@ -1809,12 +2543,16 @@ pub fn generate_micro_check(conn: &Connection) -> Result<Vec<MicroCheckItem>, St
         });
     }
 
-    // 2. Two error_logs items (prioritizing highest count)
+    // 2. Two error_logs items (prioritizing active errors & highest count)
     let mut e_stmt = conn
         .prepare(
-            "SELECT id, category, wrong_text, right_text, count, created_at
+            "SELECT id, category, wrong_text, right_text, count, created_at,
+                    COALESCE(drill_mode, 'GRAMMAR_MCQ'), COALESCE(status, 'active'),
+                    COALESCE(streak_distinct, 0), COALESCE(last_drill_id, 0),
+                    COALESCE(last_context_tag, '')
              FROM error_logs
-             ORDER BY count DESC, id DESC
+             ORDER BY (CASE WHEN COALESCE(status, 'active') = 'active' THEN 0 ELSE 1 END) ASC,
+                      count DESC, id DESC
              LIMIT 2",
         )
         .map_err(|e| e.to_string())?;
@@ -1827,6 +2565,12 @@ pub fn generate_micro_check(conn: &Connection) -> Result<Vec<MicroCheckItem>, St
                 right_text: r.get(3)?,
                 count: r.get(4)?,
                 created_at: r.get(5)?,
+                drill_mode: r.get(6)?,
+                status: r.get(7)?,
+                streak_distinct: r.get(8)?,
+                last_drill_id: r.get(9)?,
+                last_context_tag: r.get(10)?,
+                drill_count: 0,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -1931,10 +2675,10 @@ pub fn get_dictation_batch(
 
     let mut stmt = conn
         .prepare(
-            "SELECT id, level, section, trap_focus, sentence, meaning_vi, practiced_count, last_accuracy
+            "SELECT id, level, section, trap_focus, sentence, meaning_vi, practiced_count, last_accuracy, COALESCE(source, 'seed')
              FROM dictation_sentences
              WHERE level = ?1
-             ORDER BY practiced_count ASC, id ASC
+             ORDER BY practiced_count ASC, (CASE WHEN COALESCE(source, 'seed') = 'ai_pack' THEN 0 ELSE 1 END) ASC, id ASC
              LIMIT ?2",
         )
         .map_err(|e| e.to_string())?;
@@ -1949,6 +2693,7 @@ pub fn get_dictation_batch(
                 meaning_vi: r.get(5)?,
                 practiced_count: r.get(6)?,
                 last_accuracy: r.get(7)?,
+                source: r.get::<_, Option<String>>(8)?.unwrap_or_else(|| "seed".to_string()),
             })
         })
         .map_err(|e| e.to_string())?;
@@ -2011,15 +2756,25 @@ pub fn submit_dictation_session(
 }
 
 pub fn list_paraphrases(conn: &Connection) -> Result<Vec<ParaphrasePair>, String> {
+    let target_band: f64 = conn
+        .query_row(
+            "SELECT COALESCE(target_band, 7.0) FROM settings WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(7.0);
+    let level = if target_band >= 7.5 { "8.0" } else { "6.5" };
     let mut stmt = conn
         .prepare(
-            "SELECT id, question_term, passage_paraphrase, source_type, trap_note, created_at
+            "SELECT id, question_term, passage_paraphrase, source_type, trap_note, created_at,
+                    COALESCE(level, '6.5'), COALESCE(source, 'seed')
              FROM paraphrase_pairs
-             ORDER BY id DESC",
+             WHERE COALESCE(level, '6.5') = ?1 OR COALESCE(source, 'seed') != 'seed'
+             ORDER BY (CASE WHEN COALESCE(source, 'seed') = 'ai_pack' THEN 0 ELSE 1 END) ASC, id DESC",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map([], |r| {
+        .query_map(params![level], |r| {
             Ok(ParaphrasePair {
                 id: r.get(0)?,
                 question_term: r.get(1)?,
@@ -2027,6 +2782,8 @@ pub fn list_paraphrases(conn: &Connection) -> Result<Vec<ParaphrasePair>, String
                 source_type: r.get(3)?,
                 trap_note: r.get(4)?,
                 created_at: r.get(5)?,
+                level: r.get::<_, Option<String>>(6)?.unwrap_or_else(|| "6.5".to_string()),
+                source: r.get::<_, Option<String>>(7)?.unwrap_or_else(|| "seed".to_string()),
             })
         })
         .map_err(|e| e.to_string())?;
@@ -2049,16 +2806,25 @@ pub fn add_paraphrase(
     if qt.is_empty() || pp.is_empty() {
         return Err("Vui lòng nhập Từ câu hỏi và Paraphrase trong bài đọc.".to_string());
     }
+    let target_band: f64 = conn
+        .query_row(
+            "SELECT COALESCE(target_band, 7.0) FROM settings WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(7.0);
+    let level = if target_band >= 7.5 { "8.0" } else { "6.5" };
     let now = Local::now().format("%Y-%m-%d").to_string();
     conn.execute(
-        "INSERT INTO paraphrase_pairs (question_term, passage_paraphrase, source_type, trap_note, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![qt, pp, source_type.trim(), trap_note.trim(), now],
+        "INSERT INTO paraphrase_pairs (question_term, passage_paraphrase, source_type, trap_note, created_at, level, source)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'user')",
+        params![qt, pp, source_type.trim(), trap_note.trim(), now, level],
     )
     .map_err(|e| e.to_string())?;
     let id = conn.last_insert_rowid();
     conn.query_row(
-        "SELECT id, question_term, passage_paraphrase, source_type, trap_note, created_at
+        "SELECT id, question_term, passage_paraphrase, source_type, trap_note, created_at,
+                COALESCE(level, '6.5'), COALESCE(source, 'seed')
          FROM paraphrase_pairs WHERE id = ?1",
         params![id],
         |r| {
@@ -2069,6 +2835,8 @@ pub fn add_paraphrase(
                 source_type: r.get(3)?,
                 trap_note: r.get(4)?,
                 created_at: r.get(5)?,
+                level: r.get::<_, Option<String>>(6)?.unwrap_or_else(|| "6.5".to_string()),
+                source: r.get::<_, Option<String>>(7)?.unwrap_or_else(|| "user".to_string()),
             })
         },
     )
@@ -2278,9 +3046,14 @@ pub fn list_speaking_sessions(conn: &Connection) -> Result<Vec<SpeakingSession>,
 pub fn get_top_errors(conn: &Connection, limit: i64) -> Result<Vec<ErrorLog>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, category, wrong_text, right_text, count, created_at
+            "SELECT id, category, wrong_text, right_text, count, created_at,
+                    COALESCE(drill_mode, 'GRAMMAR_MCQ'), COALESCE(status, 'active'),
+                    COALESCE(streak_distinct, 0), COALESCE(last_drill_id, 0),
+                    COALESCE(last_context_tag, ''),
+                    (SELECT COUNT(*) FROM error_drills d WHERE d.error_log_id = error_logs.id)
              FROM error_logs
-             ORDER BY count DESC, id DESC
+             ORDER BY (CASE WHEN COALESCE(status, 'active') = 'active' THEN 0 ELSE 1 END) ASC,
+                      count DESC, id DESC
              LIMIT ?1",
         )
         .map_err(|e| e.to_string())?;
@@ -2293,6 +3066,12 @@ pub fn get_top_errors(conn: &Connection, limit: i64) -> Result<Vec<ErrorLog>, St
                 right_text: r.get(3)?,
                 count: r.get(4)?,
                 created_at: r.get(5)?,
+                drill_mode: r.get(6)?,
+                status: r.get(7)?,
+                streak_distinct: r.get(8)?,
+                last_drill_id: r.get(9)?,
+                last_context_tag: r.get(10)?,
+                drill_count: r.get(11)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -2319,21 +3098,363 @@ pub fn upsert_error_log(
         .map_err(|e| e.to_string())?;
 
     if let Some(id) = existing_id {
+        // Relapse trigger: repeating an error reactivates it and resets streak_distinct
         conn.execute(
-            "UPDATE error_logs SET count = count + 1 WHERE id = ?1",
+            "UPDATE error_logs SET count = count + 1, status = 'active', streak_distinct = 0 WHERE id = ?1",
             params![id],
         )
         .map_err(|e| e.to_string())?;
     } else {
         let now = Local::now().format("%Y-%m-%d").to_string();
+        let cat_low = category.to_lowercase();
+        let drill_mode = if cat_low.contains("t/f/ng") || cat_low.contains("paraphrase") || cat_low.contains("part 3") || cat_low.contains("concession") {
+            "MINI_CASE"
+        } else if cat_low.contains("chính tả") || cat_low.contains("nhầm từ") || cat_low.contains("effect/affect") {
+            "TYPING"
+        } else {
+            "GRAMMAR_MCQ"
+        };
         conn.execute(
-            "INSERT INTO error_logs (category, wrong_text, right_text, count, created_at)
-             VALUES (?1, ?2, ?3, 1, ?4)",
-            params![category.trim(), wrong_text.trim(), right_text.trim(), now],
+            "INSERT INTO error_logs (category, wrong_text, right_text, count, created_at, drill_mode, status, streak_distinct, source)
+             VALUES (?1, ?2, ?3, 1, ?4, ?5, 'active', 0, 'user')",
+            params![category.trim(), wrong_text.trim(), right_text.trim(), now, drill_mode],
         )
         .map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+pub fn trigger_error_relapse_from_grade(conn: &Connection, grade: &GradeResult) -> Result<i64, String> {
+    let mut relapsed = 0_i64;
+    let mut stmt = conn
+        .prepare("SELECT id, category, wrong_text FROM error_logs WHERE COALESCE(status, 'active') = 'mastered'")
+        .map_err(|e| e.to_string())?;
+    let mastered: Vec<(i64, String, String)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    for (id, cat, wrong) in mastered {
+        let cat_low = cat.to_lowercase();
+        let wrong_low = wrong.to_lowercase();
+        let cat_tail = cat_low.split('·').last().unwrap_or("").trim().to_string();
+
+        let matched_rep = grade
+            .repeated_top_errors
+            .iter()
+            .any(|msg| msg.to_lowercase().contains(&cat_low));
+        let matched_corr = grade.corrections.iter().any(|c| {
+            let cw = c.wrong.to_lowercase();
+            let cc = c.category.to_lowercase();
+            let cr = c.reason.to_lowercase();
+            (!wrong_low.is_empty() && cw.contains(&wrong_low))
+                || (!cat_tail.is_empty() && (cc.contains(&cat_tail) || cr.contains(&cat_tail)))
+        });
+
+        if matched_rep || matched_corr {
+            conn.execute(
+                "UPDATE error_logs SET status = 'active', streak_distinct = 0, count = count + 1 WHERE id = ?1",
+                params![id],
+            )
+            .map_err(|e| e.to_string())?;
+            relapsed += 1;
+        }
+    }
+    Ok(relapsed)
+}
+
+pub fn list_writing_prompts(conn: &Connection, level: &str) -> Result<Vec<WritingPrompt>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, task_type, topic, title, prompt_text, outline_hint, target_vocab_json, source, practiced_count, COALESCE(chart_spec_json, '')
+             FROM writing_prompts
+             WHERE level = ?1
+             ORDER BY (CASE WHEN source = 'ai_pack' THEN 0 ELSE 1 END) ASC, id ASC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![level], |r| {
+            let id: i64 = r.get(0)?;
+            let task_type: String = r.get(1)?;
+            let target_words = match task_type.as_str() {
+                "task1" => 150,
+                "task2" => 250,
+                _ => 90,
+            };
+            let tv_json: String = r.get(6)?;
+            let target_vocab: Vec<String> = serde_json::from_str(&tv_json).unwrap_or_default();
+            Ok(WritingPrompt {
+                id: format!("wp-{id}"),
+                mode: task_type,
+                topic: r.get(2)?,
+                title: r.get(3)?,
+                prompt: r.get(4)?,
+                outline_hint: r.get(5)?,
+                target_words,
+                target_vocab,
+                source: r.get(7)?,
+                practiced_count: r.get(8)?,
+                chart_spec_json: r.get(9)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for item in rows {
+        out.push(item.map_err(|e| e.to_string())?);
+    }
+    Ok(out)
+}
+
+pub fn mark_writing_practiced(
+    conn: &Connection,
+    prompt_id: Option<&str>,
+    today: NaiveDate,
+) -> Result<bool, String> {
+    if let Some(pid) = prompt_id {
+        if let Some(raw_num) = pid.strip_prefix("wp-") {
+            if let Ok(num) = raw_num.parse::<i64>() {
+                let _ = conn.execute(
+                    "UPDATE writing_prompts SET practiced_count = practiced_count + 1 WHERE id = ?1",
+                    params![num],
+                );
+            }
+        }
+    }
+    let today_str = today.format("%Y-%m-%d").to_string();
+    let ticked = auto_tick_quest_by_hint(conn, &today_str, "writing")?;
+    adjust_study_day(conn, &today_str, 10, 0)?;
+    Ok(ticked)
+}
+
+pub fn get_pack_context_for_ai(conn: &Connection) -> Result<(String, Vec<String>, Vec<ErrorLog>), String> {
+    let target_band: f64 = conn
+        .query_row(
+            "SELECT COALESCE(target_band, 7.0) FROM settings WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(7.0);
+    let level = if target_band >= 7.5 { "8.0" } else { "6.5" }.to_string();
+
+    let mut w_stmt = conn
+        .prepare("SELECT word FROM vocab_cards ORDER BY id DESC LIMIT 60")
+        .map_err(|e| e.to_string())?;
+    let exclude_words: Vec<String> = w_stmt
+        .query_map([], |r| r.get(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    let top_errors = get_top_errors(conn, 3)?;
+    Ok((level, exclude_words, top_errors))
+}
+
+pub fn apply_topic_pack_to_db(
+    conn: &Connection,
+    topic: &str,
+    level: &str,
+    pack: &TopicPackPayload,
+    today: &str,
+    endpoint: &str,
+) -> Result<RefillPackResult, String> {
+    let clean_topic = topic.trim();
+    let mut vocab_added = 0_i64;
+    let mut dictations_added = 0_i64;
+    let mut prompts_added = 0_i64;
+    let mut paraphrases_added = 0_i64;
+    let mut drills_added = 0_i64;
+
+    let mut active_error_ids: Vec<i64> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id FROM error_logs
+                 ORDER BY (CASE WHEN COALESCE(status, 'active') = 'active' THEN 0 ELSE 1 END) ASC,
+                          count DESC, id DESC
+                 LIMIT 3",
+            )
+            .map_err(|e| e.to_string())?;
+        let ids = stmt
+            .query_map([], |r| r.get(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        ids
+    };
+    if active_error_ids.is_empty() {
+        active_error_ids.push(1);
+    }
+
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+
+    // 1. Vocab (10 collocations)
+    for v in &pack.vocab {
+        let w = v.word.trim();
+        let m = v.meaning.trim();
+        let ex = v.example.trim();
+        if w.is_empty() || m.is_empty() || ex.is_empty() {
+            continue;
+        }
+        let changed = tx
+            .execute(
+                "INSERT INTO vocab_cards (track, topic, word, meaning, example, ease, interval_days, reps, due_date, source)
+                 SELECT 'ielts', ?1, ?2, ?3, ?4, 2.5, 0, 0, ?5, 'ai_pack'
+                 WHERE NOT EXISTS (SELECT 1 FROM vocab_cards WHERE lower(word) = lower(?2))",
+                params![clean_topic, w, m, ex, today],
+            )
+            .map_err(|e| e.to_string())?;
+        if changed > 0 {
+            vocab_added += 1;
+        }
+    }
+
+    // 2. Dictation (6..=30 words, non-empty meaning)
+    for d in &pack.dictations {
+        let sent = d.sentence.trim();
+        let meaning = d.meaning_vi.trim();
+        let wc = sent.split_whitespace().count();
+        if wc < 6 || wc > 30 || meaning.is_empty() {
+            continue;
+        }
+        let section = if d.section.trim().is_empty() {
+            "Listening Part 3"
+        } else {
+            d.section.trim()
+        };
+        let trap = if d.trap_focus.trim().is_empty() {
+            clean_topic
+        } else {
+            d.trap_focus.trim()
+        };
+        let changed = tx
+            .execute(
+                "INSERT INTO dictation_sentences (level, section, trap_focus, sentence, meaning_vi, source)
+                 SELECT ?1, ?2, ?3, ?4, ?5, 'ai_pack'
+                 WHERE NOT EXISTS (SELECT 1 FROM dictation_sentences WHERE lower(sentence) = lower(?4))",
+                params![level, section, trap, sent, meaning],
+            )
+            .map_err(|e| e.to_string())?;
+        if changed > 0 {
+            dictations_added += 1;
+        }
+    }
+
+    // 3. Writing Prompts
+    for wp in &pack.writing_prompts {
+        let title = wp.title.trim();
+        let prompt_text = wp.prompt_text.trim();
+        if title.is_empty() || prompt_text.is_empty() {
+            continue;
+        }
+        let task_type = match wp.task_type.trim().to_lowercase().as_str() {
+            "task1" | "task_1" => "task1",
+            "paragraph_90" | "body" => "paragraph_90",
+            _ => "task2",
+        };
+        let tv_json = serde_json::to_string(&wp.target_vocab).unwrap_or_else(|_| "[]".to_string());
+        let chart_spec = if task_type == "task1" {
+            wp.chart_spec_json.trim()
+        } else {
+            ""
+        };
+        let changed = tx
+            .execute(
+                "INSERT INTO writing_prompts (level, task_type, topic, title, prompt_text, outline_hint, target_vocab_json, source, practiced_count, chart_spec_json)
+                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, 'ai_pack', 0, ?8
+                 WHERE NOT EXISTS (SELECT 1 FROM writing_prompts WHERE level = ?1 AND lower(title) = lower(?4))",
+                params![level, task_type, clean_topic, title, prompt_text, wp.outline_hint.trim(), tv_json, chart_spec],
+            )
+            .map_err(|e| e.to_string())?;
+        if changed > 0 {
+            prompts_added += 1;
+        }
+    }
+
+    // 4. Paraphrases
+    for p in &pack.paraphrases {
+        let qt = p.question_term.trim();
+        let pp = p.passage_paraphrase.trim();
+        if qt.is_empty() || pp.is_empty() || qt.eq_ignore_ascii_case(pp) {
+            continue;
+        }
+        let src_type = if p.source_type.trim().is_empty() {
+            format!("Reading · {clean_topic}")
+        } else {
+            p.source_type.trim().to_string()
+        };
+        let changed = tx
+            .execute(
+                "INSERT INTO paraphrase_pairs (question_term, passage_paraphrase, source_type, trap_note, created_at, level, source)
+                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, 'ai_pack'
+                 WHERE NOT EXISTS (SELECT 1 FROM paraphrase_pairs WHERE lower(question_term) = lower(?1) AND lower(passage_paraphrase) = lower(?2))",
+                params![qt, pp, src_type, p.trap_note.trim(), today, level],
+            )
+            .map_err(|e| e.to_string())?;
+        if changed > 0 {
+            paraphrases_added += 1;
+        }
+    }
+
+    // 5. Error Drills (Partial validation: TYPING or >=3 options containing answer)
+    for dr in &pack.error_drills {
+        let stem = dr.stem.trim();
+        let answer = dr.answer.trim();
+        if stem.is_empty() || answer.is_empty() {
+            continue;
+        }
+        let mode = match dr.drill_mode.trim() {
+            "TYPING" | "MINI_CASE" => dr.drill_mode.trim(),
+            _ => "GRAMMAR_MCQ",
+        };
+        let mut opts = dr.options.clone();
+        if mode != "TYPING" {
+            if opts.len() < 3 || !opts.iter().any(|o| o.trim() == answer) {
+                continue;
+            }
+        } else {
+            opts.clear();
+        }
+        let eid = active_error_ids
+            .get(dr.error_index)
+            .copied()
+            .unwrap_or(active_error_ids[0]);
+        let ctx = if dr.context_tag.trim().is_empty() {
+            clean_topic.to_lowercase()
+        } else {
+            dr.context_tag.trim().to_string()
+        };
+        let opts_json = serde_json::to_string(&opts).unwrap_or_else(|_| "[]".to_string());
+        let changed = tx
+            .execute(
+                "INSERT INTO error_drills (error_log_id, drill_mode, context_tag, stem, options_json, answer, rationale_vi, source)
+                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, 'ai_pack'
+                 WHERE NOT EXISTS (SELECT 1 FROM error_drills WHERE error_log_id = ?1 AND stem = ?4)",
+                params![eid, mode, ctx, stem, opts_json, answer, dr.rationale_vi.trim()],
+            )
+            .map_err(|e| e.to_string())?;
+        if changed > 0 {
+            drills_added += 1;
+        }
+    }
+
+    tx.execute(
+        "UPDATE settings SET last_ai_refill_at = ?1, last_ai_refill_topic = ?2 WHERE id = 1",
+        params![today, clean_topic],
+    )
+    .map_err(|e| e.to_string())?;
+
+    tx.commit().map_err(|e| e.to_string())?;
+
+    Ok(RefillPackResult {
+        topic: clean_topic.to_string(),
+        level: level.to_string(),
+        vocab_added,
+        dictations_added,
+        prompts_added,
+        paraphrases_added,
+        drills_added,
+        endpoint: endpoint.to_string(),
+    })
 }
 
 pub fn add_practice_score(
@@ -2400,6 +3521,87 @@ pub fn save_essay(
     adjust_study_day(conn, &today, 10, 0)?;
 
     Ok(conn.last_insert_rowid())
+}
+
+pub fn check_auto_refill_due(conn: &Connection, today: NaiveDate) -> Result<AutoRefillStatus, String> {
+    let raw = get_settings_raw(conn)?;
+    let today_str = today.format("%Y-%m-%d").to_string();
+    let has_key = !raw.gemini_api_key.trim().is_empty();
+    let enabled = raw.auto_refill_enabled;
+    let level = if raw.target_band >= 7.5 { "8.0" } else { "6.5" };
+
+    let roadmap_done: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM roadmap_items WHERE track = ?1 AND done = 1",
+            params![level],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let current_week = (roadmap_done + 1).clamp(1, 24) as usize;
+    let mut idx = (current_week - 1) % IELTS_TOPICS.len();
+    if IELTS_TOPICS[idx].eq_ignore_ascii_case(raw.last_ai_refill_topic.trim()) {
+        idx = (idx + 1) % IELTS_TOPICS.len();
+    }
+    let recommended_topic = IELTS_TOPICS[idx].to_string();
+
+    if !has_key || !enabled || raw.last_ai_refill_at.trim() == today_str {
+        return Ok(AutoRefillStatus {
+            enabled,
+            should_auto_refill: false,
+            trigger_reason: String::new(),
+            recommended_topic,
+            last_refill_at: raw.last_ai_refill_at,
+            last_refill_topic: raw.last_ai_refill_topic,
+        });
+    }
+
+    let days_since = NaiveDate::parse_from_str(raw.last_ai_refill_at.trim(), "%Y-%m-%d")
+        .ok()
+        .map(|d| (today - d).num_days());
+
+    // 1. Sunday weekly trigger (>= 6 days since last refill or never refilled)
+    if today.weekday() == Weekday::Sun && days_since.map_or(true, |d| d >= 6) {
+        return Ok(AutoRefillStatus {
+            enabled,
+            should_auto_refill: true,
+            trigger_reason: "sunday".to_string(),
+            recommended_topic,
+            last_refill_at: raw.last_ai_refill_at,
+            last_refill_topic: raw.last_ai_refill_topic,
+        });
+    }
+
+    // 2. Study progress trigger (>= 5 days cooldown or >= 3 study_days if never refilled, PLUS milestone met)
+    let study_days_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM study_days WHERE minutes > 0", [], |r| r.get(0))
+        .unwrap_or(0);
+    let learned_vocab: i64 = conn
+        .query_row("SELECT COUNT(*) FROM vocab_cards WHERE reps >= 1", [], |r| r.get(0))
+        .unwrap_or(0);
+    let dictation_unpracticed: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM dictation_sentences WHERE level = ?1 AND practiced_count = 0",
+            params![level],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
+    let time_ready = days_since.map_or_else(|| study_days_count >= 3, |d| d >= 5);
+    let progress_ready = learned_vocab >= 10 || dictation_unpracticed < 5 || roadmap_done >= 2;
+    let (should_auto_refill, trigger_reason) = if time_ready && progress_ready {
+        (true, "progress".to_string())
+    } else {
+        (false, String::new())
+    };
+
+    Ok(AutoRefillStatus {
+        enabled,
+        should_auto_refill,
+        trigger_reason,
+        recommended_topic,
+        last_refill_at: raw.last_ai_refill_at,
+        last_refill_topic: raw.last_ai_refill_topic,
+    })
 }
 
 pub fn get_dashboard_state(conn: &Connection) -> Result<DashboardState, String> {
@@ -2570,6 +3772,10 @@ pub fn get_dashboard_state(conn: &Connection) -> Result<DashboardState, String> 
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
 
+    let level = if raw_settings.target_band >= 7.5 { "8.0" } else { "6.5" };
+    let prompts = list_writing_prompts(conn, level)?;
+    let auto_refill_status = check_auto_refill_due(conn, Local::now().date_naive())?;
+
     Ok(DashboardState {
         settings,
         streak,
@@ -2588,7 +3794,8 @@ pub fn get_dashboard_state(conn: &Connection) -> Result<DashboardState, String> 
         speaking_sessions,
         recent_essays,
         practice_scores,
-        prompts: default_writing_prompts_for_band(raw_settings.target_band),
+        prompts,
+        auto_refill_status,
     })
 }
 
@@ -2715,76 +3922,75 @@ pub fn set_study_level(conn: &Connection, level: &str) -> Result<DashboardState,
         .map_err(|e| e.to_string())?;
     }
 
+    let seeds_65 = all_vocab_seeds_65();
+    let seeds_80 = all_vocab_seeds_80();
     if is_80 {
-        for v in VOCAB_SEEDS {
+        for v in &seeds_65 {
             conn.execute(
-                "DELETE FROM vocab_cards WHERE word = ?1 AND reps = 0 AND COALESCE(is_user_card, 0) = 0",
+                "DELETE FROM vocab_cards WHERE word = ?1 AND reps = 0 AND COALESCE(is_user_card, 0) = 0 AND COALESCE(source, 'seed') = 'seed'",
                 params![v.word],
             )
             .map_err(|e| e.to_string())?;
         }
-        for v in VOCAB_SEEDS_80 {
+        for v in &seeds_80 {
             conn.execute(
-                "INSERT INTO vocab_cards (track, topic, word, meaning, example, ease, interval_days, reps, due_date)
-                 SELECT 'ielts', ?1, ?2, ?3, ?4, 2.5, 0, 0, ?5
-                 WHERE NOT EXISTS (SELECT 1 FROM vocab_cards WHERE word = ?2)",
+                "INSERT INTO vocab_cards (track, topic, word, meaning, example, ease, interval_days, reps, due_date, source)
+                 SELECT 'ielts', ?1, ?2, ?3, ?4, 2.5, 0, 0, ?5, 'seed'
+                 WHERE NOT EXISTS (SELECT 1 FROM vocab_cards WHERE lower(word) = lower(?2))",
                 params![v.topic, v.word, v.meaning, v.example, today],
             )
             .map_err(|e| e.to_string())?;
         }
     } else {
-        for v in VOCAB_SEEDS_80 {
+        for v in &seeds_80 {
             conn.execute(
-                "DELETE FROM vocab_cards WHERE word = ?1 AND reps = 0 AND COALESCE(is_user_card, 0) = 0",
+                "DELETE FROM vocab_cards WHERE word = ?1 AND reps = 0 AND COALESCE(is_user_card, 0) = 0 AND COALESCE(source, 'seed') = 'seed'",
                 params![v.word],
             )
             .map_err(|e| e.to_string())?;
         }
-        for v in VOCAB_SEEDS {
+        for v in &seeds_65 {
             conn.execute(
-                "INSERT INTO vocab_cards (track, topic, word, meaning, example, ease, interval_days, reps, due_date)
-                 SELECT 'ielts', ?1, ?2, ?3, ?4, 2.5, 0, 0, ?5
-                 WHERE NOT EXISTS (SELECT 1 FROM vocab_cards WHERE word = ?2)",
+                "INSERT INTO vocab_cards (track, topic, word, meaning, example, ease, interval_days, reps, due_date, source)
+                 SELECT 'ielts', ?1, ?2, ?3, ?4, 2.5, 0, 0, ?5, 'seed'
+                 WHERE NOT EXISTS (SELECT 1 FROM vocab_cards WHERE lower(word) = lower(?2))",
                 params![v.topic, v.word, v.meaning, v.example, today],
             )
             .map_err(|e| e.to_string())?;
         }
     }
 
-    let mut has_user_errors = false;
-    {
-        let mut stmt = conn
-            .prepare("SELECT wrong_text, right_text FROM error_logs")
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-            .map_err(|e| e.to_string())?;
-        for row in rows.flatten() {
-            let in_65 = ERROR_LOG_SEEDS_65
-                .iter()
-                .any(|e| e.wrong_text == row.0 && e.right_text == row.1);
-            let in_80 = ERROR_LOG_SEEDS_80
-                .iter()
-                .any(|e| e.wrong_text == row.0 && e.right_text == row.1);
-            if !in_65 && !in_80 {
-                has_user_errors = true;
-                break;
-            }
-        }
+    // Swap untouched opposite-track seed errors + their seed drills cleanly, keeping all user/practiced errors!
+    let old_seed_src = if is_80 { "seed_65" } else { "seed_80" };
+    let new_seed_src = if is_80 { "seed_80" } else { "seed_65" };
+    conn.execute(
+        "DELETE FROM error_drills
+         WHERE source = 'seed'
+           AND error_log_id IN (
+             SELECT id FROM error_logs
+             WHERE source = ?1 AND COALESCE(streak_distinct, 0) = 0 AND COALESCE(status, 'active') = 'active'
+           )",
+        params![old_seed_src],
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM error_logs
+         WHERE source = ?1 AND COALESCE(streak_distinct, 0) = 0 AND COALESCE(status, 'active') = 'active'",
+        params![old_seed_src],
+    )
+    .map_err(|e| e.to_string())?;
+
+    let err_seeds = if is_80 { ERROR_LOG_SEEDS_80 } else { ERROR_LOG_SEEDS_65 };
+    for e in err_seeds {
+        conn.execute(
+            "INSERT INTO error_logs (category, wrong_text, right_text, count, created_at, drill_mode, status, streak_distinct, source)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, 'active', 0, ?7
+             WHERE NOT EXISTS (SELECT 1 FROM error_logs WHERE lower(wrong_text) = lower(?2) AND lower(right_text) = lower(?3))",
+            params![e.category, e.wrong_text, e.right_text, e.count, today, e.drill_mode, new_seed_src],
+        )
+        .map_err(|e| e.to_string())?;
     }
-    if !has_user_errors {
-        conn.execute("DELETE FROM error_logs", [])
-            .map_err(|e| e.to_string())?;
-        let err_seeds = if is_80 { ERROR_LOG_SEEDS_80 } else { ERROR_LOG_SEEDS_65 };
-        for e in err_seeds {
-            conn.execute(
-                "INSERT INTO error_logs (category, wrong_text, right_text, count, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![e.category, e.wrong_text, e.right_text, e.count, today],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-    }
+    ensure_seed_error_drills(conn)?;
 
     let mut prev_done: Vec<bool> = Vec::new();
     {
@@ -3023,8 +4229,8 @@ pub fn import_roadmap_to_db(
         if !parsed.paraphrase_pairs.is_empty() {
             for p in &parsed.paraphrase_pairs {
                 conn.execute(
-                    "INSERT INTO paraphrase_pairs (question_term, passage_paraphrase, source_type, trap_note, created_at)
-                     SELECT ?1, ?2, ?3, ?4, ?5
+                    "INSERT INTO paraphrase_pairs (question_term, passage_paraphrase, source_type, trap_note, created_at, level, source)
+                     SELECT ?1, ?2, ?3, ?4, ?5, '6.5', 'user'
                      WHERE NOT EXISTS (SELECT 1 FROM paraphrase_pairs WHERE lower(question_term) = lower(?1) AND lower(passage_paraphrase) = lower(?2))",
                     params![p.question_term, p.passage_paraphrase, p.source_type, p.trap_note, today],
                 )
@@ -3278,25 +4484,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn schema_seed_imports_40_vocab_24_roadmap_24_dictation_48_speaking_6_paraphrase() {
+    fn schema_seed_imports_60_vocab_24_roadmap_48_dictation_48_speaking_12_paraphrase_24_prompts() {
         let conn = Connection::open_in_memory().unwrap();
         init_schema_and_seed(&conn, None).unwrap();
         let dash = get_dashboard_state(&conn).unwrap();
-        assert_eq!(dash.total_vocab_count, 40);
+        assert_eq!(dash.total_vocab_count, 60);
         assert_eq!(dash.roadmap.len(), 24);
-        assert_eq!(dash.paraphrase_pairs.len(), 6);
+        assert_eq!(dash.paraphrase_pairs.len(), 12);
         assert_eq!(dash.heatmap.len(), 70);
         assert_eq!(dash.prompts.len(), 12);
 
         let dict_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM dictation_sentences", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(dict_count, 24);
+        assert_eq!(dict_count, 48);
 
         let spk_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM speaking_bank", [], |r| r.get(0))
             .unwrap();
         assert_eq!(spk_count, 48);
+
+        let wp_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM writing_prompts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(wp_count, 24);
+
+        let drill_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM error_drills", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(drill_count, 30);
     }
 
     #[test]
@@ -3337,7 +4553,7 @@ mod tests {
         assert!(dash.settings.has_api_key);
         assert!(dash.roadmap[0].done);
         assert_eq!(dash.skill_bands.iter().find(|b| b.skill == "Reading").unwrap().current, 6.5);
-        assert_eq!(dash.paraphrase_pairs.len(), 6);
+        assert_eq!(dash.paraphrase_pairs.len(), 12);
     }
 
     #[test]
@@ -3661,6 +4877,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         assert_eq!(updated.theme, "mono-light");
@@ -3703,14 +4920,14 @@ mod tests {
 
         let d0 = get_dashboard_state(&conn).unwrap();
         assert_eq!(d0.settings.target_band, 7.0);
-        assert_eq!(d0.total_vocab_count, 40);
+        assert_eq!(d0.total_vocab_count, 60);
         assert_eq!(d0.error_logs.len(), 10);
         // Mark Tuần 1 done before switching
         toggle_roadmap_item(&conn, d0.roadmap[0].id).unwrap();
 
         let d80 = set_study_level(&conn, "8.0").unwrap();
         assert_eq!(d80.settings.target_band, 8.0);
-        assert_eq!(d80.total_vocab_count, 40);
+        assert_eq!(d80.total_vocab_count, 60);
         assert_eq!(d80.roadmap.len(), 24);
         assert!(d80.roadmap[0].done); // Preserved!
         assert!(!d80.roadmap[0].title.starts_with('['));
@@ -3721,11 +4938,12 @@ mod tests {
         assert_eq!(d80.skill_bands[0].current, 7.0); // Fresh DB baseline for 8.0
         assert_eq!(d80.error_logs.len(), 10);
         assert!(ERROR_LOG_SEEDS_80.iter().any(|e| e.wrong_text == d80.error_logs[0].wrong_text));
+        assert!(d80.paraphrase_pairs.iter().any(|p| p.question_term == "ubiquitous"));
 
         let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
         let due_80 = get_due_vocab(&conn, &today, None).unwrap();
         assert!(!due_80.is_empty());
-        assert!(VOCAB_SEEDS_80.iter().any(|v| v.word == due_80[0].word));
+        assert!(all_vocab_seeds_80().iter().any(|v| v.word == due_80[0].word));
 
         // Review first C1-C2 card so reps > 0, and add a custom error log
         review_vocab_card(&conn, due_80[0].id, 3, Local::now().date_naive()).unwrap();
@@ -3733,7 +4951,7 @@ mod tests {
 
         // Switching to 8.0 again does not duplicate vocab cards
         let d80_again = set_study_level(&conn, "8.0").unwrap();
-        assert_eq!(d80_again.total_vocab_count, 40);
+        assert_eq!(d80_again.total_vocab_count, 60);
 
         // User enters a real practice score, then switches back to 6.5 -> score, studied card, and custom error preserved!
         add_practice_score(&conn, "Reading", "Cam 16 T1", 8.0, "35/40").unwrap();
@@ -3742,7 +4960,7 @@ mod tests {
         assert_eq!(d65.skill_bands[1].target, 7.0);
         assert_eq!(d65.skill_bands[1].current, 8.0); // User score preserved!
         assert!(d65.roadmap[0].done);
-        assert_eq!(d65.total_vocab_count, 41); // 40 Band 6.5 + 1 studied Band 8.0 card
+        assert_eq!(d65.total_vocab_count, 61); // 60 Band 6.5 + 1 studied Band 8.0 card
         assert!(d65.error_logs.iter().any(|e| e.wrong_text == "my wrong"));
     }
 
@@ -3901,5 +5119,311 @@ mod tests {
             )
             .unwrap();
         assert_eq!(quest_done, 1);
+    }
+
+    #[test]
+    fn error_drills_seeds_have_60_questions_across_tracks() {
+        assert_eq!(ERROR_DRILL_SEEDS_65.len(), 30);
+        assert_eq!(ERROR_DRILL_SEEDS_80.len(), 30);
+        for d in ERROR_DRILL_SEEDS_65.iter().chain(ERROR_DRILL_SEEDS_80.iter()) {
+            assert!(!d.stem.trim().is_empty());
+            assert!(!d.answer.trim().is_empty());
+            if d.drill_mode != "TYPING" {
+                assert!(d.options.len() >= 3, "MCQ/MINI_CASE missing options: {}", d.stem);
+                assert!(d.options.contains(&d.answer), "Answer missing from options: {}", d.stem);
+            }
+        }
+
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema_and_seed(&conn, None).unwrap();
+        let drills_65 = generate_error_drills(&conn, Some(10)).unwrap();
+        assert_eq!(drills_65.len(), 10);
+
+        set_study_level(&conn, "8.0").unwrap();
+        let drills_80 = generate_error_drills(&conn, Some(10)).unwrap();
+        assert_eq!(drills_80.len(), 10);
+    }
+
+    #[test]
+    fn error_mastery_loop_and_relapse_trigger_work() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema_and_seed(&conn, None).unwrap();
+
+        // 3 consecutive correct on distinct contexts -> mastered
+        let first = generate_error_drills(&conn, Some(10)).unwrap().into_iter().next().unwrap();
+        let eid = first.error_log_id;
+        let r1 = submit_error_drill_result(&conn, eid, first.drill_id, &first.context_tag, true).unwrap();
+        assert_eq!(r1.streak_distinct, 1);
+        assert_eq!(r1.status, "active");
+
+        let d2 = generate_error_drills(&conn, Some(10))
+            .unwrap()
+            .into_iter()
+            .find(|d| d.error_log_id == eid)
+            .unwrap();
+        assert_ne!(d2.drill_id, first.drill_id);
+        let r2 = submit_error_drill_result(&conn, eid, d2.drill_id, &d2.context_tag, true).unwrap();
+        assert_eq!(r2.streak_distinct, 2);
+
+        let d3 = generate_error_drills(&conn, Some(10))
+            .unwrap()
+            .into_iter()
+            .find(|d| d.error_log_id == eid)
+            .unwrap();
+        assert_ne!(d3.drill_id, d2.drill_id);
+        let r3 = submit_error_drill_result(&conn, eid, d3.drill_id, &d3.context_tag, true).unwrap();
+        assert_eq!(r3.streak_distinct, 3);
+        assert_eq!(r3.status, "mastered");
+        assert!(r3.newly_mastered);
+
+        // Relapse trigger when Writing AI flags a correction matching that error
+        let (cat, wrong): (String, String) = conn
+            .query_row("SELECT category, wrong_text FROM error_logs WHERE id = ?1", params![eid], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        let grade = GradeResult {
+            ta: 6.0, cc: 6.0, lr: 6.0, gra: 5.5, overall: 6.0,
+            corrections: vec![crate::models::Correction {
+                wrong: wrong.clone(),
+                right: "fixed".to_string(),
+                category: cat.clone(),
+                reason: "Repeated".to_string(),
+            }],
+            band65_rewrite: String::new(),
+            summary_vi: String::new(),
+            repeated_top_errors: vec![format!("Lỗi #1 ({cat})")],
+        };
+        let relapsed = trigger_error_relapse_from_grade(&conn, &grade).unwrap();
+        assert!(relapsed >= 1);
+        let (st, stk): (String, i64) = conn
+            .query_row("SELECT status, streak_distinct FROM error_logs WHERE id = ?1", params![eid], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!(st, "active");
+        assert_eq!(stk, 0);
+    }
+
+    #[test]
+    fn submit_error_drill_session_ticks_quiz_quest_and_study_days() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema_and_seed(&conn, None).unwrap();
+        let today = Local::now().date_naive();
+        let today_str = today.format("%Y-%m-%d").to_string();
+
+        conn.execute(
+            "INSERT INTO daily_quests (date, track, title, meta, minutes, done, tier, action_hint)
+             VALUES (?1, 'ielts', 'Quiz luyện lỗi', 'Meta', 10, 0, 'core', 'quiz')",
+            params![today_str],
+        ).unwrap();
+
+        let drills = generate_error_drills(&conn, Some(3)).unwrap();
+        let inputs: Vec<ErrorDrillResultInput> = drills
+            .iter()
+            .map(|d| ErrorDrillResultInput {
+                error_log_id: d.error_log_id,
+                drill_id: d.drill_id,
+                context_tag: d.context_tag.clone(),
+                correct: true,
+            })
+            .collect();
+        let res = submit_error_drill_session(&conn, inputs, today).unwrap();
+        assert!(res.marked_quest_done);
+        assert_eq!(res.accuracy_pct, 100);
+    }
+
+    #[test]
+    fn review_vocab_card_auto_ticks_srs_quest_and_updates_study_days() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema_and_seed(&conn, None).unwrap();
+        let today = Local::now().date_naive();
+        let today_str = today.format("%Y-%m-%d").to_string();
+
+        conn.execute(
+            "INSERT INTO daily_quests (date, track, title, meta, minutes, done, tier, action_hint)
+             VALUES (?1, 'ielts', 'Ôn SRS 8p', 'Meta', 8, 0, 'core', 'srs')",
+            params![today_str],
+        ).unwrap();
+
+        let cards = get_due_vocab(&conn, &today_str, None).unwrap();
+        review_vocab_card(&conn, cards[0].id, 2, today).unwrap();
+
+        let srs_done: i64 = conn
+            .query_row(
+                "SELECT done FROM daily_quests WHERE date = ?1 AND action_hint = 'srs' LIMIT 1",
+                params![today_str],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(srs_done, 1);
+        let qd: i64 = conn
+            .query_row("SELECT quests_done FROM study_days WHERE date = ?1", params![today_str], |r| r.get(0))
+            .unwrap();
+        assert!(qd >= 1);
+    }
+
+    #[test]
+    fn cure_leech_card_validates_target_word_presence() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema_and_seed(&conn, None).unwrap();
+        let today_str = Local::now().date_naive().format("%Y-%m-%d").to_string();
+        let card = add_vocab_card(&conn, "mitigate", "giảm thiểu", "Trees mitigate heat.", "Env", &today_str).unwrap();
+
+        // Off-topic sentence without word/root must be rejected
+        let bad = cure_leech_card(&conn, card.id, "I went to the market yesterday.", &today_str);
+        assert!(bad.is_err());
+
+        // Sentence containing inflected form passes
+        let ok = cure_leech_card(&conn, card.id, "Green roofs help mitigating summer heat.", &today_str);
+        assert!(ok.is_ok());
+    }
+
+    #[test]
+    fn log_dictation_errors_creates_clean_pair_and_cloze_drill() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema_and_seed(&conn, None).unwrap();
+
+        log_dictation_errors(
+            &conn,
+            1,
+            "Bẫy số nhiều -s",
+            "The community library opens at quarter to nine on Wednesdays.",
+            vec![DictationErrorPair {
+                wrong: "open".to_string(),
+                right: "opens".to_string(),
+            }],
+        ).unwrap();
+
+        let (cat, mode, eid): (String, String, i64) = conn
+            .query_row(
+                "SELECT category, drill_mode, id FROM error_logs WHERE wrong_text = 'open' AND right_text = 'opens'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(cat, "Listening · Chính tả");
+        assert_eq!(mode, "TYPING");
+
+        let (stem, ans): (String, String) = conn
+            .query_row(
+                "SELECT stem, answer FROM error_drills WHERE error_log_id = ?1 LIMIT 1",
+                params![eid],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!(stem.contains("________"));
+        assert!(!stem.contains("opens"));
+        assert_eq!(ans, "opens");
+    }
+
+    #[test]
+    fn writing_prompts_24_and_mark_practiced_ticks_writing_quest() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema_and_seed(&conn, None).unwrap();
+        let today = Local::now().date_naive();
+        let today_str = today.format("%Y-%m-%d").to_string();
+
+        conn.execute(
+            "INSERT INTO daily_quests (date, track, title, meta, minutes, done, tier, action_hint)
+             VALUES (?1, 'ielts', 'Writing 18p', 'Meta', 18, 0, 'core', 'writing')",
+            params![today_str],
+        ).unwrap();
+
+        let prompts65 = list_writing_prompts(&conn, "6.5").unwrap();
+        let prompts80 = list_writing_prompts(&conn, "8.0").unwrap();
+        assert_eq!(prompts65.len(), 12);
+        assert_eq!(prompts80.len(), 12);
+
+        let ticked = mark_writing_practiced(&conn, Some(&prompts65[0].id), today).unwrap();
+        assert!(ticked);
+
+        let practiced: i64 = conn
+            .query_row("SELECT practiced_count FROM writing_prompts ORDER BY id ASC LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(practiced, 1);
+    }
+
+    #[test]
+    fn refill_content_pack_partial_validation_and_dedup_work() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema_and_seed(&conn, None).unwrap();
+        let today_str = Local::now().date_naive().format("%Y-%m-%d").to_string();
+
+        let pack = TopicPackPayload {
+            vocab: vec![
+                crate::models::TopicPackVocab { word: "curb urban sprawl".into(), meaning: "kiềm chế đô thị hóa tràn lan".into(), example: "Zoning helps curb urban sprawl.".into() },
+                crate::models::TopicPackVocab { word: "".into(), meaning: "invalid empty".into(), example: "bad".into() },
+            ],
+            dictations: vec![
+                crate::models::TopicPackDictation { section: "Part 4".into(), trap_focus: "-s".into(), sentence: "Green belts help cities preserve biodiversity and curb urban sprawl.".into(), meaning_vi: "Vành đai xanh bảo vệ đa dạng sinh học.".into() },
+                crate::models::TopicPackDictation { section: "Part 1".into(), trap_focus: "short".into(), sentence: "Too short.".into(), meaning_vi: "Ngắn".into() },
+            ],
+            writing_prompts: vec![
+                crate::models::TopicPackPrompt { task_type: "task2".into(), title: "Task 2 · Green Belt Policy".into(), prompt_text: "Discuss green belts around megacities.".into(), outline_hint: "Intro/Body".into(), target_vocab: vec!["curb urban sprawl".into()], chart_spec_json: "".into() },
+            ],
+            paraphrases: vec![
+                crate::models::TopicPackParaphrase { question_term: "expand rapidly".into(), passage_paraphrase: "mushroom, sprawl unchecked".into(), source_type: "Reading".into(), trap_note: "scope".into() },
+            ],
+            error_drills: vec![
+                TopicPackDrill { error_index: 0, drill_mode: "GRAMMAR_MCQ".into(), context_tag: "urban".into(), stem: "Pick valid:".into(), options: vec!["A".into(), "B".into(), "C".into(), "D".into()], answer: "A".into(), rationale_vi: "Ok".into() },
+                TopicPackDrill { error_index: 0, drill_mode: "GRAMMAR_MCQ".into(), context_tag: "urban".into(), stem: "Invalid missing answer".into(), options: vec!["X".into(), "Y".into()], answer: "Z".into(), rationale_vi: "Bad".into() },
+            ],
+        };
+
+        let res = apply_topic_pack_to_db(&conn, "Urbanization", "6.5", &pack, &today_str, "test").unwrap();
+        assert_eq!(res.vocab_added, 1);
+        assert_eq!(res.dictations_added, 1);
+        assert_eq!(res.prompts_added, 1);
+        assert_eq!(res.paraphrases_added, 1);
+        assert_eq!(res.drills_added, 1);
+
+        // Re-applying same pack deduplicates everything
+        let res2 = apply_topic_pack_to_db(&conn, "Urbanization", "6.5", &pack, &today_str, "test").unwrap();
+        assert_eq!(res2.vocab_added, 0);
+        assert_eq!(res2.dictations_added, 0);
+        assert_eq!(res2.prompts_added, 0);
+        assert_eq!(res2.paraphrases_added, 0);
+        assert_eq!(res2.drills_added, 0);
+    }
+
+    #[test]
+    fn task1_seeds_all_have_valid_chart_spec_json_and_auto_refill_due_works() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema_and_seed(&conn, None).unwrap();
+
+        for level in ["6.5", "8.0"] {
+            let prompts = list_writing_prompts(&conn, level).unwrap();
+            let task1s: Vec<_> = prompts.iter().filter(|p| p.mode == "task1").collect();
+            assert_eq!(task1s.len(), 4);
+            for p in task1s {
+                assert!(!p.chart_spec_json.trim().is_empty(), "missing chart spec on {}", p.title);
+                let parsed: serde_json::Value = serde_json::from_str(&p.chart_spec_json).unwrap();
+                assert!(parsed.get("type").is_some());
+            }
+        }
+
+        // No API key -> should_auto_refill is false even on Sunday
+        let sunday = NaiveDate::from_ymd_opt(2026, 11, 29).unwrap();
+        assert_eq!(sunday.weekday(), Weekday::Sun);
+        let st_no_key = check_auto_refill_due(&conn, sunday).unwrap();
+        assert!(!st_no_key.should_auto_refill);
+
+        // With API key & enabled -> triggers on Sunday
+        conn.execute("UPDATE settings SET gemini_api_key = 'test-fake-key' WHERE id = 1", []).unwrap();
+        let st_sun = check_auto_refill_due(&conn, sunday).unwrap();
+        assert!(st_sun.should_auto_refill);
+        assert_eq!(st_sun.trigger_reason, "sunday");
+
+        // Same day lock after refill
+        conn.execute(
+            "UPDATE settings SET last_ai_refill_at = '2026-11-29', last_ai_refill_topic = ?1 WHERE id = 1",
+            params![st_sun.recommended_topic],
+        ).unwrap();
+        let st_same_day = check_auto_refill_due(&conn, sunday).unwrap();
+        assert!(!st_same_day.should_auto_refill);
+
+        // Toggle off -> disabled even 7 days later
+        conn.execute("UPDATE settings SET auto_refill_enabled = 0 WHERE id = 1", []).unwrap();
+        let next_sunday = NaiveDate::from_ymd_opt(2026, 12, 6).unwrap();
+        let st_disabled = check_auto_refill_due(&conn, next_sunday).unwrap();
+        assert!(!st_disabled.enabled);
+        assert!(!st_disabled.should_auto_refill);
     }
 }

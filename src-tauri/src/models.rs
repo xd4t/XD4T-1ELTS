@@ -16,6 +16,12 @@ pub struct Settings {
     pub writing_focus_notes: Vec<String>,
     pub skill_targets: BTreeMap<String, f64>,
     pub phase_labels: BTreeMap<i64, String>,
+    #[serde(default = "default_true")]
+    pub auto_refill_enabled: bool,
+    #[serde(default)]
+    pub last_ai_refill_at: String,
+    #[serde(default)]
+    pub last_ai_refill_topic: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,6 +39,26 @@ pub struct SettingsPublic {
     pub writing_checklist: Vec<String>,
     pub writing_focus_notes: Vec<String>,
     pub phase_labels: BTreeMap<i64, String>,
+    #[serde(default = "default_true")]
+    pub auto_refill_enabled: bool,
+    #[serde(default)]
+    pub last_ai_refill_at: String,
+    #[serde(default)]
+    pub last_ai_refill_topic: String,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoRefillStatus {
+    pub enabled: bool,
+    pub should_auto_refill: bool,
+    pub trigger_reason: String,
+    pub recommended_topic: String,
+    pub last_refill_at: String,
+    pub last_refill_topic: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +78,22 @@ pub struct DailyQuest {
 
 fn default_tier_core() -> String {
     "core".to_string()
+}
+
+fn default_seed_source() -> String {
+    "seed".to_string()
+}
+
+fn default_level_65() -> String {
+    "6.5".to_string()
+}
+
+fn default_drill_mode() -> String {
+    "GRAMMAR_MCQ".to_string()
+}
+
+fn default_error_status() -> String {
+    "active".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,6 +122,8 @@ pub struct VocabCard {
     pub hidden: bool,
     #[serde(default)]
     pub is_user_card: bool,
+    #[serde(default = "default_seed_source")]
+    pub source: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,6 +134,16 @@ pub struct WritingPrompt {
     pub prompt: String,
     pub outline_hint: String,
     pub target_words: i64,
+    #[serde(default)]
+    pub topic: String,
+    #[serde(default)]
+    pub target_vocab: Vec<String>,
+    #[serde(default = "default_seed_source")]
+    pub source: String,
+    #[serde(default)]
+    pub practiced_count: i64,
+    #[serde(default)]
+    pub chart_spec_json: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,6 +193,160 @@ pub struct ErrorLog {
     pub right_text: String,
     pub count: i64,
     pub created_at: String,
+    #[serde(default = "default_drill_mode")]
+    pub drill_mode: String,
+    #[serde(default = "default_error_status")]
+    pub status: String,
+    #[serde(default)]
+    pub streak_distinct: i64,
+    #[serde(default)]
+    pub last_drill_id: i64,
+    #[serde(default)]
+    pub last_context_tag: String,
+    #[serde(default)]
+    pub drill_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorDrillQuestion {
+    pub drill_id: i64,
+    pub error_log_id: i64,
+    pub category: String,
+    pub drill_mode: String,
+    pub context_tag: String,
+    pub stem: String,
+    pub options: Vec<String>,
+    pub answer: String,
+    pub rationale_vi: String,
+    pub wrong_text: String,
+    pub right_text: String,
+    pub streak_distinct: i64,
+    pub status: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorDrillResultInput {
+    pub error_log_id: i64,
+    pub drill_id: i64,
+    pub context_tag: String,
+    pub correct: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorDrillSingleResult {
+    pub error_log_id: i64,
+    pub streak_distinct: i64,
+    pub status: String,
+    pub newly_mastered: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorDrillSubmitResult {
+    pub total_questions: i64,
+    pub correct_count: i64,
+    pub accuracy_pct: i64,
+    pub newly_mastered: Vec<String>,
+    pub marked_quest_done: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DictationErrorPair {
+    pub wrong: String,
+    pub right: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TopicPackVocab {
+    pub word: String,
+    pub meaning: String,
+    pub example: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TopicPackDictation {
+    #[serde(default)]
+    pub section: String,
+    #[serde(default)]
+    pub trap_focus: String,
+    pub sentence: String,
+    pub meaning_vi: String,
+}
+
+fn deserialize_string_or_json_val<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let val = serde_json::Value::deserialize(deserializer)?;
+    match val {
+        serde_json::Value::Null => Ok(String::new()),
+        serde_json::Value::String(s) => Ok(s),
+        other => Ok(other.to_string()),
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TopicPackPrompt {
+    pub task_type: String,
+    pub title: String,
+    pub prompt_text: String,
+    #[serde(default)]
+    pub outline_hint: String,
+    #[serde(default)]
+    pub target_vocab: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_string_or_json_val")]
+    pub chart_spec_json: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TopicPackParaphrase {
+    pub question_term: String,
+    pub passage_paraphrase: String,
+    #[serde(default)]
+    pub source_type: String,
+    #[serde(default)]
+    pub trap_note: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TopicPackDrill {
+    #[serde(default)]
+    pub error_index: usize,
+    pub drill_mode: String,
+    #[serde(default)]
+    pub context_tag: String,
+    pub stem: String,
+    #[serde(default)]
+    pub options: Vec<String>,
+    pub answer: String,
+    #[serde(default)]
+    pub rationale_vi: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TopicPackPayload {
+    #[serde(default)]
+    pub vocab: Vec<TopicPackVocab>,
+    #[serde(default)]
+    pub dictations: Vec<TopicPackDictation>,
+    #[serde(default)]
+    pub writing_prompts: Vec<TopicPackPrompt>,
+    #[serde(default)]
+    pub paraphrases: Vec<TopicPackParaphrase>,
+    #[serde(default)]
+    pub error_drills: Vec<TopicPackDrill>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RefillPackResult {
+    pub topic: String,
+    pub level: String,
+    pub vocab_added: i64,
+    pub dictations_added: i64,
+    pub prompts_added: i64,
+    pub paraphrases_added: i64,
+    pub drills_added: i64,
+    pub endpoint: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -224,6 +432,10 @@ pub struct ParaphrasePair {
     pub source_type: String,
     pub trap_note: String,
     pub created_at: String,
+    #[serde(default = "default_level_65")]
+    pub level: String,
+    #[serde(default = "default_seed_source")]
+    pub source: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -236,6 +448,8 @@ pub struct DictationSentence {
     pub meaning_vi: String,
     pub practiced_count: i64,
     pub last_accuracy: i64,
+    #[serde(default = "default_seed_source")]
+    pub source: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -383,4 +597,5 @@ pub struct DashboardState {
     pub recent_essays: Vec<Essay>,
     pub practice_scores: Vec<PracticeScore>,
     pub prompts: Vec<WritingPrompt>,
+    pub auto_refill_status: AutoRefillStatus,
 }

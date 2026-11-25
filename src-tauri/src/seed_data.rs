@@ -71,121 +71,31 @@ pub fn default_writing_prompts() -> Vec<WritingPrompt> {
     default_writing_prompts_for_band(7.0)
 }
 
+#[allow(dead_code)]
 pub fn default_writing_prompts_for_band(target_band: f64) -> Vec<WritingPrompt> {
-    let is_80 = target_band >= 7.5;
-    vec![
-        // 4 Paragraph 90 words
-        WritingPrompt {
-            id: "p90-1".into(),
-            mode: "paragraph_90".into(),
-            title: "AI & Tự động hóa (Body 90 từ)".into(),
-            prompt: "Automation and AI are replacing many manual jobs. Write ONE body paragraph (80–100 words) explaining one major benefit of this trend.".into(),
-            outline_hint: if is_80 {
-                "KHUNG BAND 7.5–8.0 (Topic -> Mechanism -> Nuanced Example/Concession -> Result):\n1. Topic: One compelling advantage of automation lies in its capacity to spur sustainable productivity.\n2. Mechanism: By executing repetitive procedures with near-zero variance, automated systems mitigate human error.\n3. Concession/Nuance: While initial capital outlays can be substantial, long-term efficiency gains arguably outweigh them.\n4. Result: Consequently, human talent can be reallocated toward strategic and creative innovation.".into()
-            } else {
-                "KHUNG 4 CÂU (Topic -> Explain -> Example -> Result):\n1. Topic: One primary advantage of automation is higher productivity.\n2. Explain: Machines perform repetitive tasks continuously without fatigue.\n3. Example: In modern factories, robotic arms assemble components faster.\n4. Result: Workers can shift to higher-value creative or supervisory roles.".into()
+    let level = if target_band >= 7.5 { "8.0" } else { "6.5" };
+    crate::seed_data_v170::WRITING_PROMPT_SEEDS
+        .iter()
+        .enumerate()
+        .filter(|(_, wp)| wp.level == level)
+        .map(|(i, wp)| WritingPrompt {
+            id: format!("wp-{}", i + 1),
+            mode: wp.task_type.to_string(),
+            title: wp.title.to_string(),
+            prompt: wp.prompt_text.to_string(),
+            outline_hint: wp.outline_hint.to_string(),
+            target_words: match wp.task_type {
+                "task1" => 150,
+                "task2" => 250,
+                _ => 90,
             },
-            target_words: 90,
-        },
-        WritingPrompt {
-            id: "p90-2".into(),
-            mode: "paragraph_90".into(),
-            title: "Học trực tuyến (Body 90 từ)".into(),
-            prompt: "Online courses are becoming increasingly popular. Write ONE body paragraph (80–100 words) explaining one key advantage for working adults.".into(),
-            outline_hint: "KHUNG 4 CÂU (Topic -> Explain -> Example -> Result):\n1. Topic: Online learning offers unmatched flexibility for full-time workers.\n2. Explain: Learners can study after shifts without commuting.\n3. Example: Recorded lectures allow employees to review complex topics at their own pace.\n4. Result: More adults can upgrade their skills and gain a competitive edge.".into(),
-            target_words: 90,
-        },
-        WritingPrompt {
-            id: "p90-3".into(),
-            mode: "paragraph_90".into(),
-            title: "Giao thông công cộng (Body 90 từ)".into(),
-            prompt: "Traffic congestion is worsening in major cities. Write ONE body paragraph (80–100 words) proposing one effective solution.".into(),
-            outline_hint: "KHUNG 4 CÂU:\n1. Topic: Investing in reliable public transit is a practical way to ease congestion.\n2. Explain: Fast metro and bus networks persuade commuters to leave private cars at home.\n3. Example: Dedicated bus lanes ensure predictable travel times during rush hour.\n4. Result: Urban roads become less crowded and carbon emissions drop.".into(),
-            target_words: 90,
-        },
-        WritingPrompt {
-            id: "p90-4".into(),
-            mode: "paragraph_90".into(),
-            title: "Làm việc từ xa (Body 90 từ)".into(),
-            prompt: "Remote work has become common in many industries. Write ONE body paragraph (80–100 words) discussing one drawback of working from home.".into(),
-            outline_hint: "KHUNG 4 CÂU:\n1. Topic: A major drawback of remote work is professional isolation.\n2. Explain: Without face-to-face contact, employees struggle to build team trust.\n3. Example: New hires often hesitate to ask quick questions over chat.\n4. Result: Collaboration slows down and job satisfaction can decline.".into(),
-            target_words: 90,
-        },
-        // 4 Task 1
-        WritingPrompt {
-            id: "t1-1".into(),
-            mode: "task1".into(),
-            title: "Task 1 · Line Graph (Internet Usage)".into(),
-            prompt: "The line graph below shows the percentage of households with high-speed internet in three countries (Vietnam, Thailand, Malaysia) between 2015 and 2025. Summarize the information by selecting and reporting the main features, and make comparisons where relevant. (150+ words)".into(),
-            outline_hint: if is_80 {
-                "KHUNG TASK 1 OVERVIEW 7.5+ (Gom nhóm thông minh):\n• Intro: Paraphrase đề + timeframe (2015–2025) tự nhiên.\n• Overview: Nêu 2 đặc điểm nổi bật nhất (xu hướng chủ đạo + đối tượng dẫn đầu/bứt phá mạnh nhất), KHÔNG chèn số liệu.\n• Body 1: Gom nhóm các đối tượng có quỹ đạo tương đồng, nêu mốc khởi điểm & điểm chuyển biến.\n• Body 2: So sánh tương quan cuối kỳ (bội số/chênh lệch) thay vì liệt kê tuần tự.".into()
-            } else {
-                "KHUNG TASK 1 OVERVIEW:\n• Intro: Paraphrase đề + timeframe (2015–2025).\n• Overview: Nêu 2 ý lớn (xu hướng chung tăng/giảm + đối tượng cao nhất/thay đổi mạnh nhất). KHÔNG đưa số liệu vào Overview.\n• Body 1: Số liệu đầu kỳ (2015) & so sánh giữa kỳ.\n• Body 2: Số liệu cuối kỳ (2025) & khoảng cách thu hẹp.".into()
-            },
-            target_words: 150,
-        },
-        WritingPrompt {
-            id: "t1-2".into(),
-            mode: "task1".into(),
-            title: "Task 1 · Bar Chart (Energy Sources)".into(),
-            prompt: "The bar chart compares electricity generation by source (coal, hydro, solar, wind) in a Southeast Asian country in 2010 and 2025. Summarize the main features and make comparisons. (150+ words)".into(),
-            outline_hint: "KHUNG TASK 1 BAR CHART:\n• Intro: The bar chart compares...\n• Overview: Fossil fuels declined slightly while solar and wind rose sharply.\n• Body 1: Coal and hydro figures & comparison.\n• Body 2: Renewable surge (solar & wind) and remaining gap.".into(),
-            target_words: 150,
-        },
-        WritingPrompt {
-            id: "t1-3".into(),
-            mode: "task1".into(),
-            title: "Task 1 · Pie Charts (Household Spending)".into(),
-            prompt: "The two pie charts illustrate average monthly household expenditure across five categories (housing, food, transport, education, leisure) in 2005 and 2025. Summarize the main features. (150+ words)".into(),
-            outline_hint: "KHUNG TASK 1 PIE CHART:\n• Intro: Paraphrase the two pie charts.\n• Overview: Housing remained the largest share; education grew while food fell proportionally.\n• Body 1: Largest categories (housing, food).\n• Body 2: Smaller shifting categories (education, transport, leisure).".into(),
-            target_words: 150,
-        },
-        WritingPrompt {
-            id: "t1-4".into(),
-            mode: "task1".into(),
-            title: "Task 1 · Process (Plastic Recycling)".into(),
-            prompt: "The diagram illustrates the stages involved in recycling plastic bottles into new consumer products. Summarize the process by describing the main stages. (150+ words)".into(),
-            outline_hint: "KHUNG TASK 1 PROCESS:\n• Intro: The diagram depicts the process of...\n• Overview: Nêu tổng số bước + điểm bắt đầu & kết thúc.\n• Body 1: Collection, sorting, compressing, crushing into flakes.\n• Body 2: Washing, melting into pellets, molding into new items.".into(),
-            target_words: 150,
-        },
-        // 4 Task 2
-        WritingPrompt {
-            id: "t2-1".into(),
-            mode: "task2".into(),
-            title: "Task 2 · Opinion (Tuần 1 · Study What They Love)".into(),
-            prompt: "Some people think that university students should only study subjects that will be useful in the future, such as science and technology, while others believe they should study whatever they like. To what extent do you agree or disagree? (250+ words)".into(),
-            outline_hint: if is_80 {
-                "KHUNG TASK 2 BAND 7.5–8.0 (Lập luận sâu + Concession + Hedging):\n• Intro: Contextualize nhẹ + Thesis nêu rõ mức độ đồng tình (to a considerable extent / arguably).\n• Body 1 (Counter-argument + Rebuttal): Thừa nhận mặt hợp lý của quan điểm đối lập (Admittedly...), sau đó phản biện sắc bén (However, this overlooks...).\n• Body 2 (Core Argument): Phân tích cơ chế nhân–quả sâu + ví dụ cụ thể, tránh over-generalization.\n• Conclusion: Khẳng định lại lập trường bằng paraphrase mới, không thêm ý mới.".into()
-            } else {
-                "KHUNG 5 DẠNG TASK 2 (CHUẨN SIMON):\n1. Opinion (Agree/Disagree): Intro (Paraphrase + Thesis rõ lập trường) -> Body 1 (Lý do 1) -> Body 2 (Lý do 2) -> Conclusion (Nhắc lại lập trường, KHÔNG thêm ý mới).\n2. Discussion + Opinion: Intro -> Body 1 (Quan điểm A) -> Body 2 (Quan điểm B + nghiêng về B) -> Conclusion.\n3. Adv–Disadv: Intro -> Body 1 (Mặt yếu hơn) -> Body 2 (Mặt trội hơn) -> Conclusion.\n4. Problem–Solution: Intro -> Body 1 (Nguyên nhân/Vấn đề) -> Body 2 (Giải pháp) -> Conclusion.\n5. Two-part: Intro -> Body 1 (Trả lời câu hỏi 1) -> Body 2 (Trả lời câu hỏi 2) -> Conclusion.".into()
-            },
-            target_words: 250,
-        },
-        WritingPrompt {
-            id: "t2-2".into(),
-            mode: "task2".into(),
-            title: "Task 2 · Discussion + Opinion (University vs Vocational)".into(),
-            prompt: "Some people think school leavers should go to university, while others believe learning a practical trade is better. Discuss both views and give your own opinion. (250+ words)".into(),
-            outline_hint: "KHUNG DISCUSSION + OPINION:\n• Intro: Both academic degrees and vocational training have merit; however, I believe...\n• Body 1 (View A): Benefits of university (theoretical depth, research/management paths).\n• Body 2 (View B + Opinion): Benefits of vocational trades (practical skills, faster employment).\n• Conclusion: Restate balanced view + personal stance (no new ideas).".into(),
-            target_words: 250,
-        },
-        WritingPrompt {
-            id: "t2-3".into(),
-            mode: "task2".into(),
-            title: "Task 2 · Problem/Solution (Urban Pollution)".into(),
-            prompt: "Air pollution in large cities is becoming a serious threat to public health. What are the main causes of this problem, and what measures can be taken to tackle it? (250+ words)".into(),
-            outline_hint: "KHUNG PROBLEM–SOLUTION:\n• Intro: Acknowledge urban air pollution + state essay examines causes and solutions.\n• Body 1 (Causes): Private vehicles + industrial emissions.\n• Body 2 (Solutions): Subsidize public transit/EVs + enforce factory emission standards.\n• Conclusion: Combined government action and public adoption can curb emissions.".into(),
-            target_words: 250,
-        },
-        WritingPrompt {
-            id: "t2-4".into(),
-            mode: "task2".into(),
-            title: "Task 2 · Adv/Disadv (Remote Work)".into(),
-            prompt: "More companies are allowing employees to work from home several days a week. Do the advantages of this trend outweigh the disadvantages? (250+ words)".into(),
-            outline_hint: "KHUNG ADVANTAGES–DISADVANTAGES:\n• Intro: Hybrid/remote work is widespread; advantages outweigh drawbacks.\n• Body 1 (Disadvantages): Isolation, blurred work-life boundaries.\n• Body 2 (Advantages): Zero commute, higher focus, better work-life balance.\n• Conclusion: Net positive when managed with clear communication.".into(),
-            target_words: 250,
-        },
-    ]
+            topic: wp.topic.to_string(),
+            target_vocab: wp.target_vocab.iter().map(|s| s.to_string()).collect(),
+            source: "seed".to_string(),
+            practiced_count: 0,
+            chart_spec_json: wp.chart_spec_json.to_string(),
+        })
+        .collect()
 }
 
 pub struct SeedRoadmap {
@@ -314,32 +224,33 @@ pub struct SeedErrorLog {
     pub wrong_text: &'static str,
     pub right_text: &'static str,
     pub count: i64,
+    pub drill_mode: &'static str,
 }
 
 pub const ERROR_LOG_SEEDS_65: &[SeedErrorLog] = &[
-    SeedErrorLog { category: "Writing · Chia động từ", wrong_text: "Everybody know", right_text: "Everybody knows", count: 3 },
-    SeedErrorLog { category: "Writing · Danh từ đếm được", wrong_text: "human have / Student need", right_text: "Humans need", count: 3 },
-    SeedErrorLog { category: "Writing · Mạo từ a/an", wrong_text: "an new adult / an talent artist", right_text: "a new adult", count: 2 },
-    SeedErrorLog { category: "Writing · Nhầm từ", wrong_text: "a good change to develop", right_text: "a good chance to develop", count: 2 },
-    SeedErrorLog { category: "Writing · Effect/Affect", wrong_text: "can effect our lives", right_text: "can affect our lives", count: 2 },
-    SeedErrorLog { category: "Writing · Từ loại", wrong_text: "harmfully effects", right_text: "harmful effects", count: 2 },
-    SeedErrorLog { category: "Writing · Comma splice", wrong_text: "...students, they are...", right_text: "...students, as they are...", count: 2 },
-    SeedErrorLog { category: "Writing · Câu cụt", wrong_text: "Firstly, positive point about students...", right_text: "One advantage is that students...", count: 2 },
-    SeedErrorLog { category: "Reading · T/F/NG", wrong_text: "Bỏ qua từ tuyệt đối every/all/only", right_text: "Soi kỹ từ tuyệt đối", count: 2 },
-    SeedErrorLog { category: "Reading · Paraphrase", wrong_text: "Nhầm were delivering ↔ introduce", right_text: "Soi nghĩa đối lập thật", count: 2 },
+    SeedErrorLog { category: "Writing · Chia động từ", wrong_text: "Everybody know", right_text: "Everybody knows", count: 3, drill_mode: "GRAMMAR_MCQ" },
+    SeedErrorLog { category: "Writing · Danh từ đếm được", wrong_text: "human have / Student need", right_text: "Humans need", count: 3, drill_mode: "GRAMMAR_MCQ" },
+    SeedErrorLog { category: "Writing · Mạo từ a/an", wrong_text: "an new adult / an talent artist", right_text: "a new adult", count: 2, drill_mode: "GRAMMAR_MCQ" },
+    SeedErrorLog { category: "Writing · Nhầm từ", wrong_text: "a good change to develop", right_text: "a good chance to develop", count: 2, drill_mode: "TYPING" },
+    SeedErrorLog { category: "Writing · Effect/Affect", wrong_text: "can effect our lives", right_text: "can affect our lives", count: 2, drill_mode: "TYPING" },
+    SeedErrorLog { category: "Writing · Từ loại", wrong_text: "harmfully effects", right_text: "harmful effects", count: 2, drill_mode: "GRAMMAR_MCQ" },
+    SeedErrorLog { category: "Writing · Comma splice", wrong_text: "...students, they are...", right_text: "...students, as they are...", count: 2, drill_mode: "GRAMMAR_MCQ" },
+    SeedErrorLog { category: "Writing · Câu cụt", wrong_text: "Firstly, positive point about students...", right_text: "One advantage is that students...", count: 2, drill_mode: "GRAMMAR_MCQ" },
+    SeedErrorLog { category: "Reading · T/F/NG", wrong_text: "Bỏ qua từ tuyệt đối every/all/only", right_text: "Soi kỹ từ tuyệt đối", count: 2, drill_mode: "MINI_CASE" },
+    SeedErrorLog { category: "Reading · Paraphrase", wrong_text: "Nhầm were delivering ↔ introduce", right_text: "Soi nghĩa đối lập thật", count: 2, drill_mode: "MINI_CASE" },
 ];
 
 pub const ERROR_LOG_SEEDS_80: &[SeedErrorLog] = &[
-    SeedErrorLog { category: "Writing · Thiếu Hedging", wrong_text: "All people will definitely cause", right_text: "Many people tend to cause", count: 3 },
-    SeedErrorLog { category: "Writing · Linker máy móc", wrong_text: "Firstly, Moreover, In conclusion", right_text: "This disparity shows", count: 3 },
-    SeedErrorLog { category: "Writing · Collocation C1", wrong_text: "make a research", right_text: "conduct empirical research", count: 2 },
-    SeedErrorLog { category: "Writing · Thiếu Concession", wrong_text: "Technology only brings benefits", right_text: "Admittedly, technology has drawbacks; however, benefits prevail", count: 2 },
-    SeedErrorLog { category: "Writing · Dangling Participle", wrong_text: "Walking into the city, the pollution was severe.", right_text: "Walking into the city, commuters saw severe pollution.", count: 2 },
-    SeedErrorLog { category: "Writing · Nominalization", wrong_text: "Because people consume too much plastic", right_text: "Excessive plastic consumption", count: 2 },
-    SeedErrorLog { category: "Reading · T/F/NG P3", wrong_text: "Suy luận quá đà giữa False và Not Given", right_text: "Chỉ chọn False khi bài đọc phủ định trực tiếp", count: 2 },
-    SeedErrorLog { category: "Reading · MC Attitude", wrong_text: "Nhầm lẫn thái độ tác giả", right_text: "Bám sát từ chỉ thái độ", count: 2 },
-    SeedErrorLog { category: "Listening · Part 3 Trap", wrong_text: "Đồng thuận giả trước yet/however", right_text: "Nghe hết câu phản hồi sau yet", count: 2 },
-    SeedErrorLog { category: "Speaking · Part 3", wrong_text: "Sa đà kể chuyện cá nhân", right_text: "Phân tích vĩ mô theo A.R.E.A", count: 2 },
+    SeedErrorLog { category: "Writing · Thiếu Hedging", wrong_text: "All people will definitely cause", right_text: "Many people tend to cause", count: 3, drill_mode: "GRAMMAR_MCQ" },
+    SeedErrorLog { category: "Writing · Linker máy móc", wrong_text: "Firstly, Moreover, In conclusion", right_text: "This disparity shows", count: 3, drill_mode: "GRAMMAR_MCQ" },
+    SeedErrorLog { category: "Writing · Collocation C1", wrong_text: "make a research", right_text: "conduct empirical research", count: 2, drill_mode: "TYPING" },
+    SeedErrorLog { category: "Writing · Thiếu Concession", wrong_text: "Technology only brings benefits", right_text: "Admittedly, technology has drawbacks; however, benefits prevail", count: 2, drill_mode: "MINI_CASE" },
+    SeedErrorLog { category: "Writing · Dangling Participle", wrong_text: "Walking into the city, the pollution was severe.", right_text: "Walking into the city, commuters saw severe pollution.", count: 2, drill_mode: "GRAMMAR_MCQ" },
+    SeedErrorLog { category: "Writing · Nominalization", wrong_text: "Because people consume too much plastic", right_text: "Excessive plastic consumption", count: 2, drill_mode: "GRAMMAR_MCQ" },
+    SeedErrorLog { category: "Reading · T/F/NG P3", wrong_text: "Suy luận quá đà giữa False và Not Given", right_text: "Chỉ chọn False khi bài đọc phủ định trực tiếp", count: 2, drill_mode: "MINI_CASE" },
+    SeedErrorLog { category: "Reading · MC Attitude", wrong_text: "Nhầm lẫn thái độ tác giả", right_text: "Bám sát từ chỉ thái độ", count: 2, drill_mode: "MINI_CASE" },
+    SeedErrorLog { category: "Listening · Part 3 Trap", wrong_text: "Đồng thuận giả trước yet/however", right_text: "Nghe hết câu phản hồi sau yet", count: 2, drill_mode: "MINI_CASE" },
+    SeedErrorLog { category: "Speaking · Part 3", wrong_text: "Sa đà kể chuyện cá nhân", right_text: "Phân tích vĩ mô theo A.R.E.A", count: 2, drill_mode: "MINI_CASE" },
 ];
 
 pub struct SeedParaphrase {
@@ -461,3 +372,31 @@ pub const SPEAKING_SEEDS: &[SeedSpeakingCue] = &[
     SeedSpeakingCue { week_num: 23, level: "8.0", topic: "Language & Thought", cue_title: "Describe an idiom or expression in another language that fascinated you.", bullets: ["what the expression is", "where you encountered it", "what cultural idea it reflects", "and explain why learning nuances matters."], part3: ["Does learning a second language genuinely alter how people perceive the world?", "Will real-time AI translation reduce the motivation to learn foreign languages?", "Should minority dialects be preserved in formal education?", "Why is pragmatic nuance harder to master than grammar?"], phrases: ["nuanced cultural expression", "transcend literal translation", "ubiquitous translation tools", "cultivate cross-cultural empathy", "by no means redundant"] },
     SeedSpeakingCue { week_num: 24, level: "8.0", topic: "Synthesis & Future", cue_title: "Describe a long-term trend you think will define the next twenty years.", bullets: ["what the trend is", "what early signs are visible today", "which groups will adapt best", "and evaluate both its promise and its risks."], part3: ["How can education prepare students for careers that do not yet exist?", "Will demographic aging slow global innovation or shift its focus?", "What makes predictions about technology notoriously unreliable?", "How can individuals maintain agency amid rapid structural change?"], phrases: ["inextricably linked to", "strike a delicate balance", "equip citizens with transferable skills", "mitigate adverse repercussions", "to a considerable extent"] },
 ];
+
+pub fn all_vocab_seeds_65() -> Vec<&'static SeedVocab> {
+    VOCAB_SEEDS
+        .iter()
+        .chain(crate::seed_data_v170::VOCAB_SEEDS_65_EXTRA.iter())
+        .collect()
+}
+
+pub fn all_vocab_seeds_80() -> Vec<&'static SeedVocab> {
+    VOCAB_SEEDS_80
+        .iter()
+        .chain(crate::seed_data_v170::VOCAB_SEEDS_80_EXTRA.iter())
+        .collect()
+}
+
+pub fn all_paraphrase_seeds_65() -> Vec<&'static SeedParaphrase> {
+    PARAPHRASE_SEEDS
+        .iter()
+        .chain(crate::seed_data_v170::PARAPHRASE_SEEDS_65_EXTRA.iter())
+        .collect()
+}
+
+pub fn all_dictation_seeds() -> Vec<&'static SeedDictation> {
+    DICTATION_SEEDS
+        .iter()
+        .chain(crate::seed_data_v170::DICTATION_SEEDS_EXTRA.iter())
+        .collect()
+}

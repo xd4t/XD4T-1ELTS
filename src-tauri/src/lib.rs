@@ -3,6 +3,7 @@ mod db;
 mod models;
 mod roadmap_parser;
 mod seed_data;
+mod seed_data_v170;
 mod srs;
 
 use std::sync::Mutex;
@@ -19,11 +20,12 @@ use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_notification::NotificationExt;
 
 use crate::models::{
-    Correction, DashboardState, DictationResultInput, DictationSentence, DictationSubmitResult,
-    ErrorFixAiGrade, ErrorFixQuestion, GradeResult, MicroCheckAnswerInput, MicroCheckItem,
-    MicroCheckSubmitResult, ParaphrasePair, QuizAnswerInput, QuizQuestion, QuizSubmitResult,
-    SettingsPublic, SpeakingCue, SpeakingErrorItem, SpeakingGradeResponse, SpeakingSession,
-    VocabCard,
+    Correction, DashboardState, DictationErrorPair, DictationResultInput, DictationSentence,
+    DictationSubmitResult, ErrorDrillQuestion, ErrorDrillResultInput, ErrorDrillSingleResult,
+    ErrorDrillSubmitResult, ErrorFixAiGrade, ErrorFixQuestion, GradeResult, MicroCheckAnswerInput,
+    MicroCheckItem, MicroCheckSubmitResult, ParaphrasePair, QuizAnswerInput, QuizQuestion,
+    QuizSubmitResult, RefillPackResult, SettingsPublic, SpeakingCue, SpeakingErrorItem,
+    SpeakingGradeResponse, SpeakingSession, VocabCard,
 };
 
 pub struct AppState {
@@ -160,6 +162,134 @@ fn generate_error_fix_quiz(
 ) -> Result<Vec<ErrorFixQuestion>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     db::generate_error_fix_quiz(&conn, count)
+}
+
+#[tauri::command]
+fn generate_error_drills(
+    state: State<'_, AppState>,
+    count: Option<i64>,
+) -> Result<Vec<ErrorDrillQuestion>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::generate_error_drills(&conn, count)
+}
+
+#[tauri::command]
+fn submit_error_drill_result(
+    state: State<'_, AppState>,
+    error_log_id: i64,
+    drill_id: i64,
+    context_tag: String,
+    correct: bool,
+) -> Result<ErrorDrillSingleResult, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::submit_error_drill_result(&conn, error_log_id, drill_id, &context_tag, correct)
+}
+
+#[tauri::command]
+fn submit_error_drill_session(
+    state: State<'_, AppState>,
+    results: Vec<ErrorDrillResultInput>,
+) -> Result<ErrorDrillSubmitResult, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let today = Local::now().date_naive();
+    let res = db::submit_error_drill_session(&conn, results, today)?;
+    let _ = db::write_widget_status(&conn);
+    Ok(res)
+}
+
+#[tauri::command]
+async fn generate_ai_drills_for_error(
+    state: State<'_, AppState>,
+    error_log_id: i64,
+) -> Result<DashboardState, String> {
+    let (api_key, model, category, wrong_text, right_text, drill_mode, level) = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        let s = db::get_settings_raw(&conn)?;
+        let level = if s.target_band >= 7.5 { "8.0" } else { "6.5" }.to_string();
+        let (cat, wrong, right, mode): (String, String, String, String) = conn
+            .query_row(
+                "SELECT category, wrong_text, right_text, COALESCE(drill_mode, 'GRAMMAR_MCQ')
+                 FROM error_logs WHERE id = ?1",
+                rusqlite::params![error_log_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .map_err(|e| format!("Không tìm thấy lỗi trong Sổ lỗi: {e}"))?;
+        (s.gemini_api_key, s.gemini_model, cat, wrong, right, mode, level)
+    };
+
+    let (drills, _endpoint) = ai::generate_ai_drills_for_error_with_gemini(
+        &api_key,
+        &model,
+        &category,
+        &wrong_text,
+        &right_text,
+        &drill_mode,
+        &level,
+    )
+    .await?;
+
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let added = db::insert_ai_drills_for_error(&conn, error_log_id, &drills)?;
+    if added == 0 {
+        return Err("AI không sinh được bài tập hợp lệ mới cho lỗi này.".to_string());
+    }
+    db::get_dashboard_state(&conn)
+}
+
+#[tauri::command]
+fn log_dictation_errors(
+    state: State<'_, AppState>,
+    sentence_id: i64,
+    trap_focus: String,
+    sentence: String,
+    pairs: Vec<DictationErrorPair>,
+) -> Result<DashboardState, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::log_dictation_errors(&conn, sentence_id, &trap_focus, &sentence, pairs)?;
+    db::get_dashboard_state(&conn)
+}
+
+#[tauri::command]
+fn mark_writing_practiced(
+    state: State<'_, AppState>,
+    prompt_id: Option<String>,
+) -> Result<DashboardState, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let today = Local::now().date_naive();
+    db::mark_writing_practiced(&conn, prompt_id.as_deref(), today)?;
+    let _ = db::write_widget_status(&conn);
+    db::get_dashboard_state(&conn)
+}
+
+#[tauri::command]
+async fn refill_content_pack(
+    state: State<'_, AppState>,
+    topic: String,
+    is_auto: Option<bool>,
+) -> Result<RefillPackResult, String> {
+    let _is_auto = is_auto.unwrap_or(false);
+    let (api_key, model, level, exclude_words, top_errors) = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        let s = db::get_settings_raw(&conn)?;
+        let (lvl, excludes, errs) = db::get_pack_context_for_ai(&conn)?;
+        (s.gemini_api_key, s.gemini_model, lvl, excludes, errs)
+    };
+
+    let (pack, endpoint) = ai::generate_topic_pack_with_gemini(
+        &api_key,
+        &model,
+        &topic,
+        &level,
+        &exclude_words,
+        &top_errors,
+    )
+    .await?;
+
+    let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let res = db::apply_topic_pack_to_db(&conn, &topic, &level, &pack, &today, &endpoint)?;
+    let _ = db::write_widget_status(&conn);
+    Ok(res)
 }
 
 #[tauri::command]
@@ -453,6 +583,7 @@ async fn grade_writing(
             result.overall,
             &feedback_json,
         )?;
+        let _ = db::trigger_error_relapse_from_grade(&conn, &result);
         let _ = db::write_widget_status(&conn);
         id
     };
@@ -538,6 +669,7 @@ fn update_settings(
     target_band: Option<f64>,
     onboarding_done: Option<bool>,
     tts_accent: Option<String>,
+    auto_refill_enabled: Option<bool>,
 ) -> Result<SettingsPublic, String> {
     if let Some(enable) = autostart {
         let mgr = app.autolaunch();
@@ -559,6 +691,7 @@ fn update_settings(
         target_band,
         onboarding_done,
         tts_accent,
+        auto_refill_enabled,
     )?;
     let _ = db::write_widget_status(&conn);
     Ok(res)
@@ -992,6 +1125,13 @@ pub fn run() {
             generate_vocab_quiz,
             submit_vocab_quiz,
             generate_error_fix_quiz,
+            generate_error_drills,
+            submit_error_drill_result,
+            submit_error_drill_session,
+            generate_ai_drills_for_error,
+            log_dictation_errors,
+            mark_writing_practiced,
+            refill_content_pack,
             grade_error_fix_with_ai,
             generate_micro_check,
             submit_micro_check,

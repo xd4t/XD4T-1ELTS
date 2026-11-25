@@ -1,4 +1,6 @@
-use crate::models::{ErrorFixAiGrade, ErrorLog, GradeResult, SpeakingAiPayload};
+use crate::models::{
+    ErrorFixAiGrade, ErrorLog, GradeResult, SpeakingAiPayload, TopicPackDrill, TopicPackPayload,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -590,6 +592,203 @@ pub async fn grade_error_fix_with_gemini(
     parse_error_fix_ai_response(&text)
 }
 
+fn extract_json_slice(raw_text: &str, open_ch: char, close_ch: char) -> &str {
+    let cleaned = raw_text
+        .trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+    let start = cleaned.find(open_ch).unwrap_or(0);
+    let end = cleaned
+        .rfind(close_ch)
+        .map(|i| i + 1)
+        .unwrap_or(cleaned.len());
+    &cleaned[start..end]
+}
+
+pub fn parse_topic_pack_response(raw_text: &str) -> Result<TopicPackPayload, String> {
+    let slice = extract_json_slice(raw_text, '{', '}');
+    serde_json::from_str::<TopicPackPayload>(slice)
+        .map_err(|e| format!("Không parse được JSON gói chủ đề từ AI: {e}"))
+}
+
+pub async fn generate_topic_pack_with_gemini(
+    api_key: &str,
+    preferred_model: &str,
+    topic: &str,
+    level: &str,
+    exclude_words: &[String],
+    top_errors: &[ErrorLog],
+) -> Result<(TopicPackPayload, String), String> {
+    let key = api_key.trim();
+    if key.is_empty() {
+        return Err("Chưa có Gemini API Key trong Cài đặt.".to_string());
+    }
+    let clean_topic = topic.trim();
+    if clean_topic.is_empty() {
+        return Err("Vui lòng chọn hoặc nhập chủ đề cần nạp.".to_string());
+    }
+
+    let exclude_str = exclude_words
+        .iter()
+        .take(60)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    let errors_str = if top_errors.is_empty() {
+        "1) Subject-verb agreement, 2) Countable nouns/articles, 3) T/F/NG absolute traps".to_string()
+    } else {
+        top_errors
+            .iter()
+            .take(3)
+            .enumerate()
+            .map(|(i, e)| format!("{}) [{}] '{}' -> '{}'", i + 1, e.category, e.wrong_text, e.right_text))
+            .collect::<Vec<_>>()
+            .join("; ")
+    };
+
+    let band_note = if level == "8.0" {
+        "Band 7.5-8.5 (C1-C2 collocations, academic hedging, nuanced Part 3/4 structures)"
+    } else {
+        "Band 6.0-7.0 (clear academic collocations, practical Task 1/2 structures)"
+    };
+
+    let prompt = format!(
+        r#"You are an IELTS curriculum designer. Create ONE cohesive 25-item offline study pack on topic "{clean_topic}" at {band_note}.
+Exclude these already-owned vocab items: [{exclude_str}].
+Student's Top 3 active errors (index 0, 1, 2): {errors_str}.
+
+Return ONLY valid JSON (no markdown fences) matching this exact schema:
+{{
+  "vocab": [
+    {{"word": "collocation phrase", "meaning": "nghĩa tiếng Việt ngắn gọn", "example": "One natural IELTS sentence using the exact phrase."}}
+  ],
+  "dictations": [
+    {{"section": "Listening Part 3", "trap_focus": "Bẫy số nhiều -s / đổi ý", "sentence": "Natural 8-22 word English listening sentence.", "meaning_vi": "Dịch tiếng Việt ngắn."}}
+  ],
+  "writing_prompts": [
+    {{"task_type": "task2", "title": "Task 2 · Topic Title", "prompt_text": "Full IELTS Task 2 prompt (250+ words).", "outline_hint": "4-bullet outline in Vietnamese+English", "target_vocab": ["phrase1", "phrase2"], "chart_spec_json": ""}},
+    {{"task_type": "task1", "title": "Task 1 · Chart/Process Title", "prompt_text": "Full IELTS Task 1 prompt (150+ words).", "outline_hint": "4-bullet overview/body outline", "target_vocab": ["phrase3"], "chart_spec_json": "{{\"type\":\"line\",\"title\":\"Title\",\"unit\":\"%\",\"labels\":[\"2015\",\"2020\",\"2025\"],\"series\":[{{\"name\":\"Group A\",\"values\":[20,40,65]}}]}}"}}
+  ],
+  "paraphrases": [
+    {{"question_term": "question keyword", "passage_paraphrase": "synonym 1, synonym 2", "source_type": "Reading · {clean_topic}", "trap_note": "Lưu ý bẫy ngắn gọn bằng tiếng Việt"}}
+  ],
+  "error_drills": [
+    {{"error_index": 0, "drill_mode": "GRAMMAR_MCQ", "context_tag": "{clean_topic}", "stem": "English question prompt on {clean_topic}", "options": ["Correct sentence", "Wrong distractor 1", "Wrong distractor 2", "Wrong distractor 3"], "answer": "Correct sentence", "rationale_vi": "Giải thích 1 dòng tiếng Việt"}}
+  ]
+}}
+Counts required: 10 vocab, 5 dictations, 2 writing_prompts (1 task2 + 1 task1 weaving in the new vocab; EVERY task1 prompt MUST include valid chart_spec_json with type in line|bar|pie|table|process|map and complete realistic numbers/steps/zones matching the prompt), 5 paraphrases, 3 error_drills (targeting error_index 0, 1, 2; drill_mode in TYPING | GRAMMAR_MCQ | MINI_CASE; for GRAMMAR_MCQ/MINI_CASE provide 4 English options with exact answer inside options)."#
+    );
+
+    let payload = json!({
+        "contents": [{
+            "role": "user",
+            "parts": [{ "text": prompt }]
+        }],
+        "generationConfig": {
+            "temperature": 0.4,
+            "responseMimeType": "application/json"
+        }
+    });
+
+    let (text, endpoint) = post_gemini_json(
+        key,
+        preferred_model,
+        &payload,
+        60,
+        "Không thể nạp gói chủ đề từ Gemini lúc này",
+    )
+    .await?;
+
+    let pack = parse_topic_pack_response(&text)?;
+    Ok((pack, endpoint))
+}
+
+pub fn parse_ai_error_drills_response(raw_text: &str) -> Result<Vec<TopicPackDrill>, String> {
+    let trimmed = raw_text.trim();
+    if trimmed.contains('[') && trimmed.find('[').unwrap_or(usize::MAX) < trimmed.find('{').unwrap_or(usize::MAX) {
+        let slice = extract_json_slice(trimmed, '[', ']');
+        serde_json::from_str::<Vec<TopicPackDrill>>(slice)
+            .map_err(|e| format!("Không parse được JSON bài tập sửa lỗi từ AI: {e}"))
+    } else {
+        #[derive(Deserialize)]
+        struct Wrapper {
+            #[serde(default)]
+            drills: Vec<TopicPackDrill>,
+        }
+        let slice = extract_json_slice(trimmed, '{', '}');
+        serde_json::from_str::<Wrapper>(slice)
+            .map(|w| w.drills)
+            .map_err(|e| format!("Không parse được JSON bài tập sửa lỗi từ AI: {e}"))
+    }
+}
+
+pub async fn generate_ai_drills_for_error_with_gemini(
+    api_key: &str,
+    preferred_model: &str,
+    category: &str,
+    wrong_text: &str,
+    right_text: &str,
+    drill_mode: &str,
+    level: &str,
+) -> Result<(Vec<TopicPackDrill>, String), String> {
+    let key = api_key.trim();
+    if key.is_empty() {
+        return Err("Chưa có Gemini API Key trong Cài đặt.".to_string());
+    }
+    let mode = match drill_mode.trim() {
+        "TYPING" | "MINI_CASE" => drill_mode.trim(),
+        _ => "GRAMMAR_MCQ",
+    };
+
+    let prompt = format!(
+        r#"Create 3 distinct-context IELTS English practice drills (mode: {mode}, track: {level}) to fix this student error:
+- Category: {category}
+- Wrong pattern: {wrong_text}
+- Right pattern: {right_text}
+
+Return ONLY a JSON object (no markdown fences):
+{{
+  "drills": [
+    {{
+      "error_index": 0,
+      "drill_mode": "{mode}",
+      "context_tag": "environment",
+      "stem": "Real English IELTS stem/sentence (use ________ for TYPING)",
+      "options": ["4 English choices for GRAMMAR_MCQ/MINI_CASE, empty [] for TYPING"],
+      "answer": "Exact correct English answer",
+      "rationale_vi": "1-line Vietnamese explanation"
+    }}
+  ]
+}}
+Rules: Use 3 DIFFERENT IELTS context_tag values (e.g. environment, education, technology). Never ask the user to type Vietnamese notes."#
+    );
+
+    let payload = json!({
+        "contents": [{
+            "role": "user",
+            "parts": [{ "text": prompt }]
+        }],
+        "generationConfig": {
+            "temperature": 0.35,
+            "responseMimeType": "application/json"
+        }
+    });
+
+    let (text, endpoint) = post_gemini_json(
+        key,
+        preferred_model,
+        &payload,
+        40,
+        "Không thể sinh bài tập AI cho lỗi này lúc này",
+    )
+    .await?;
+
+    let drills = parse_ai_error_drills_response(&text)?;
+    Ok((drills, endpoint))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -628,6 +827,12 @@ mod tests {
             right_text: "a new adult".to_string(),
             count: 5,
             created_at: "2026-11-25".to_string(),
+            drill_mode: "GRAMMAR_MCQ".to_string(),
+            status: "active".to_string(),
+            streak_distinct: 0,
+            last_drill_id: 0,
+            last_context_tag: String::new(),
+            drill_count: 3,
         }];
         let grade = GradeResult {
             ta: 6.0,
@@ -712,5 +917,26 @@ mod tests {
         let raw_false = r#"{"correct": false, "feedback": "Thiếu chia số nhiều ở danh từ."}"#;
         let parsed_false = parse_error_fix_ai_response(raw_false).unwrap();
         assert!(!parsed_false.correct);
+    }
+
+    #[test]
+    fn parse_topic_pack_and_ai_drills_work() {
+        let raw_pack = r#"```json
+        {
+          "vocab": [{"word": "curb emissions", "meaning": "kiềm chế khí thải", "example": "Cities must curb emissions."}],
+          "dictations": [{"section": "Part 4", "trap_focus": "-s", "sentence": "Solar grids reduce carbon emissions across urban regions.", "meaning_vi": "Lưới điện mặt trời giảm khí thải."}],
+          "writing_prompts": [{"task_type": "task2", "title": "Task 2 · Green Transit", "prompt_text": "Discuss green transit.", "outline_hint": "Intro-Body", "target_vocab": ["curb emissions"]}],
+          "paraphrases": [{"question_term": "reduce", "passage_paraphrase": "curb, mitigate", "source_type": "Cam 18", "trap_note": "check scope"}],
+          "error_drills": [{"error_index": 0, "drill_mode": "GRAMMAR_MCQ", "context_tag": "environment", "stem": "Pick correct:", "options": ["A", "B", "C", "D"], "answer": "A", "rationale_vi": "Đúng"}]
+        }
+        ```"#;
+        let pack = parse_topic_pack_response(raw_pack).unwrap();
+        assert_eq!(pack.vocab.len(), 1);
+        assert_eq!(pack.error_drills.len(), 1);
+
+        let raw_drills = r#"{"drills":[{"error_index":0,"drill_mode":"TYPING","context_tag":"work","stem":"Strict rules ________ growth.","options":[],"answer":"affect","rationale_vi":"Động từ"}]}"#;
+        let drills = parse_ai_error_drills_response(raw_drills).unwrap();
+        assert_eq!(drills.len(), 1);
+        assert_eq!(drills[0].answer, "affect");
     }
 }
