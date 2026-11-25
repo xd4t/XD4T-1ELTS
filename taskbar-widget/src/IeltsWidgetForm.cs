@@ -19,6 +19,7 @@ namespace XD4TIeltsBar
 {
     internal sealed class WidgetStatusData
     {
+        public string Theme = "pastel-male";
         public int QuestsDone = 0;
         public int QuestsTotal = 3;
         public int Streak = 0;
@@ -380,6 +381,7 @@ namespace XD4TIeltsBar
                 if (dict == null) return;
 
                 WidgetStatusData d = new WidgetStatusData();
+                if (dict.ContainsKey("theme") && dict["theme"] != null) d.Theme = dict["theme"].ToString();
                 if (dict.ContainsKey("quests_done")) d.QuestsDone = Convert.ToInt32(dict["quests_done"], CultureInfo.InvariantCulture);
                 if (dict.ContainsKey("quests_total")) d.QuestsTotal = Math.Max(1, Convert.ToInt32(dict["quests_total"], CultureInfo.InvariantCulture));
                 if (dict.ContainsKey("streak")) d.Streak = Convert.ToInt32(dict["streak"], CultureInfo.InvariantCulture);
@@ -533,6 +535,7 @@ namespace XD4TIeltsBar
             var candidates = new List<string>
             {
                 Path.Combine(baseDir, "xd4t-ielts65.exe"),
+                Path.GetFullPath(Path.Combine(baseDir, "..", "xd4t-ielts65.exe")),
                 Path.Combine(localAppData, "XD4T-1ELTS", "xd4t-ielts65.exe"),
                 Path.Combine(localAppData, "Programs", "XD4T IELTS 6.5", "xd4t-ielts65.exe"),
                 Path.Combine(programFiles, "XD4T IELTS 6.5", "xd4t-ielts65.exe"),
@@ -584,16 +587,62 @@ namespace XD4TIeltsBar
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
 
-            Color bg = _isDark
-                ? (_hovered ? ColorTranslator.FromHtml("#1F1F25") : ColorTranslator.FromHtml("#0C0C0E"))
-                : (_hovered ? ColorTranslator.FromHtml("#E7E7EE") : ColorTranslator.FromHtml("#FFFFFF"));
-            Color border = _isDark ? ColorTranslator.FromHtml("#242429") : ColorTranslator.FromHtml("#DCDCE2");
-            Color fg = _isDark ? ColorTranslator.FromHtml("#F2F2F5") : ColorTranslator.FromHtml("#0C0C0E");
-            Color badgeBg = _isDark ? ColorTranslator.FromHtml("#F2F2F5") : ColorTranslator.FromHtml("#18181C");
-            Color badgeFg = _isDark ? ColorTranslator.FromHtml("#0C0C0E") : ColorTranslator.FromHtml("#FFFFFF");
-            Color track = _isDark ? ColorTranslator.FromHtml("#222228") : ColorTranslator.FromHtml("#E3E3EA");
-            Color okGreen = _isDark ? ColorTranslator.FromHtml("#22C55E") : ColorTranslator.FromHtml("#15803D");
-            Color alertRed = _isDark ? ColorTranslator.FromHtml("#EF4444") : ColorTranslator.FromHtml("#D70015");
+            string theme = (_data.Theme ?? "pastel-male").Trim().ToLowerInvariant();
+            bool isPastelMale = theme == "pastel-male";
+            bool isPastelFemale = theme == "pastel-female";
+
+            Color bg;
+            Color border;
+            Color fg;
+            Color badgeBg;
+            Color badgeFg;
+            Color track;
+            Color okGreen;
+            Color alertRed;
+            Color progressStart;
+            Color progressEnd;
+
+            if (isPastelMale)
+            {
+                bg = _hovered ? ColorTranslator.FromHtml("#E8F2F0") : ColorTranslator.FromHtml("#F2F7F6");
+                border = ColorTranslator.FromHtml("#C8DDD9");
+                fg = ColorTranslator.FromHtml("#1E2F36");
+                badgeBg = ColorTranslator.FromHtml("#3B82A0");
+                badgeFg = ColorTranslator.FromHtml("#FFFFFF");
+                track = ColorTranslator.FromHtml("#DCE8E6");
+                okGreen = ColorTranslator.FromHtml("#1E7E5C");
+                alertRed = ColorTranslator.FromHtml("#C2414B");
+                progressStart = ColorTranslator.FromHtml("#3B82A0");
+                progressEnd = ColorTranslator.FromHtml("#52A68C");
+            }
+            else if (isPastelFemale)
+            {
+                bg = _hovered ? ColorTranslator.FromHtml("#FBECEB") : ColorTranslator.FromHtml("#FDF6F5");
+                border = ColorTranslator.FromHtml("#EED2D4");
+                fg = ColorTranslator.FromHtml("#3A272B");
+                badgeBg = ColorTranslator.FromHtml("#D67A89");
+                badgeFg = ColorTranslator.FromHtml("#FFFFFF");
+                track = ColorTranslator.FromHtml("#F4E1E2");
+                okGreen = ColorTranslator.FromHtml("#2D7A54");
+                alertRed = ColorTranslator.FromHtml("#C94452");
+                progressStart = ColorTranslator.FromHtml("#D67A89");
+                progressEnd = ColorTranslator.FromHtml("#E59876");
+            }
+            else
+            {
+                bg = _isDark
+                    ? (_hovered ? ColorTranslator.FromHtml("#1F1F25") : ColorTranslator.FromHtml("#0C0C0E"))
+                    : (_hovered ? ColorTranslator.FromHtml("#E7E7EE") : ColorTranslator.FromHtml("#FFFFFF"));
+                border = _isDark ? ColorTranslator.FromHtml("#242429") : ColorTranslator.FromHtml("#DCDCE2");
+                fg = _isDark ? ColorTranslator.FromHtml("#F2F2F5") : ColorTranslator.FromHtml("#0C0C0E");
+                badgeBg = _isDark ? ColorTranslator.FromHtml("#F2F2F5") : ColorTranslator.FromHtml("#18181C");
+                badgeFg = _isDark ? ColorTranslator.FromHtml("#0C0C0E") : ColorTranslator.FromHtml("#FFFFFF");
+                track = _isDark ? ColorTranslator.FromHtml("#222228") : ColorTranslator.FromHtml("#E3E3EA");
+                okGreen = _isDark ? ColorTranslator.FromHtml("#22C55E") : ColorTranslator.FromHtml("#15803D");
+                alertRed = _isDark ? ColorTranslator.FromHtml("#EF4444") : ColorTranslator.FromHtml("#D70015");
+                progressStart = badgeBg;
+                progressEnd = badgeBg;
+            }
 
             g.Clear(bg);
 
@@ -655,11 +704,29 @@ namespace XD4TIeltsBar
             {
                 float fillW = Math.Max(Sf(4f), (float)(barW * ratio));
                 RectangleF fillRect = new RectangleF(padX, barY, fillW, barH);
-                Color fillCol = allDone ? okGreen : badgeBg;
                 using (GraphicsPath fp = CreateRoundedRect(fillRect, Sf(1.5f)))
-                using (SolidBrush fbr = new SolidBrush(fillCol))
                 {
-                    g.FillPath(fbr, fp);
+                    if (allDone)
+                    {
+                        using (SolidBrush fbr = new SolidBrush(okGreen))
+                        {
+                            g.FillPath(fbr, fp);
+                        }
+                    }
+                    else if (progressStart != progressEnd)
+                    {
+                        using (LinearGradientBrush lbr = new LinearGradientBrush(fillRect, progressStart, progressEnd, LinearGradientMode.Horizontal))
+                        {
+                            g.FillPath(lbr, fp);
+                        }
+                    }
+                    else
+                    {
+                        using (SolidBrush fbr = new SolidBrush(progressStart))
+                        {
+                            g.FillPath(fbr, fp);
+                        }
+                    }
                 }
             }
         }

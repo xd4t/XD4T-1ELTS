@@ -7,9 +7,28 @@ export interface SettingsPublic {
   reminder_time: string;
   autostart: boolean;
   target_band: number;
+  onboarding_done: boolean;
   writing_checklist: string[];
   writing_focus_notes: string[];
   phase_labels: Record<string, string>;
+}
+
+export interface BackupResultDto {
+  cancelled: boolean;
+  path: string | null;
+  message: string;
+}
+
+export interface RestoreResultDto {
+  cancelled: boolean;
+  dashboard: DashboardState | null;
+  message: string;
+}
+
+export interface WidgetRuntimeInfo {
+  running: boolean;
+  autostart: boolean;
+  exe_found: boolean;
 }
 
 export interface RoadmapPreview {

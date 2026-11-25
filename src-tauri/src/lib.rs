@@ -189,6 +189,7 @@ fn update_settings(
     reminder_time: Option<String>,
     autostart: Option<bool>,
     target_band: Option<f64>,
+    onboarding_done: Option<bool>,
 ) -> Result<SettingsPublic, String> {
     if let Some(enable) = autostart {
         let mgr = app.autolaunch();
@@ -208,6 +209,7 @@ fn update_settings(
         reminder_time,
         autostart,
         target_band,
+        onboarding_done,
     )?;
     let _ = db::write_widget_status(&conn);
     Ok(res)
@@ -276,6 +278,225 @@ fn import_roadmap_md(
     )?;
     let _ = db::write_widget_status(&conn);
     db::get_dashboard_state(&conn)
+}
+
+#[derive(Serialize)]
+pub struct BackupResultDto {
+    pub cancelled: bool,
+    pub path: Option<String>,
+    pub message: String,
+}
+
+#[derive(Serialize)]
+pub struct RestoreResultDto {
+    pub cancelled: bool,
+    pub dashboard: Option<DashboardState>,
+    pub message: String,
+}
+
+#[derive(Serialize)]
+pub struct WidgetRuntimeInfo {
+    pub running: bool,
+    pub autostart: bool,
+    pub exe_found: bool,
+}
+
+#[tauri::command]
+fn export_db_backup(state: State<'_, AppState>) -> Result<BackupResultDto, String> {
+    let default_name = format!("xd4t-ielts-backup-{}.db", Local::now().format("%Y%m%d"));
+    let Some(dest_path) = rfd::FileDialog::new()
+        .set_title("Sao lưu dữ liệu XD4T IELTS")
+        .set_file_name(&default_name)
+        .add_filter("SQLite Database", &["db"])
+        .save_file()
+    else {
+        return Ok(BackupResultDto {
+            cancelled: true,
+            path: None,
+            message: "Đã hủy sao lưu.".to_string(),
+        });
+    };
+
+    let src_path = db::db_file_path()?;
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::checkpoint_and_copy_backup(&conn, &src_path, &dest_path)?;
+
+    let path_str = dest_path.display().to_string();
+    Ok(BackupResultDto {
+        cancelled: false,
+        path: Some(path_str.clone()),
+        message: format!("✓ Đã sao lưu thành công tới: {path_str}"),
+    })
+}
+
+#[tauri::command]
+fn import_db_backup(state: State<'_, AppState>) -> Result<RestoreResultDto, String> {
+    let Some(src_path) = rfd::FileDialog::new()
+        .set_title("Khôi phục dữ liệu XD4T IELTS từ file (.db)")
+        .add_filter("SQLite Database", &["db"])
+        .pick_file()
+    else {
+        return Ok(RestoreResultDto {
+            cancelled: true,
+            dashboard: None,
+            message: "Đã hủy khôi phục.".to_string(),
+        });
+    };
+
+    db::validate_backup_file(&src_path)?;
+    let target_db = db::db_file_path()?;
+
+    let mut conn_guard = state.db.lock().map_err(|e| e.to_string())?;
+    // Flush and close the existing file-backed connection before replacing the .db file
+    let _ = conn_guard.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+    let temp_mem = Connection::open_in_memory().map_err(|e| e.to_string())?;
+    let old_conn = std::mem::replace(&mut *conn_guard, temp_mem);
+    drop(old_conn);
+
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = std::path::PathBuf::from(format!("{}{}", target_db.display(), suffix));
+        if sidecar.exists() {
+            let _ = std::fs::remove_file(&sidecar);
+        }
+    }
+
+    std::fs::copy(&src_path, &target_db)
+        .map_err(|e| format!("Không thể ghi đè file dữ liệu: {e}"))?;
+
+    let new_conn = db::open_and_init_db()?;
+    *conn_guard = new_conn;
+    let _ = db::write_widget_status(&conn_guard);
+    let dash = db::get_dashboard_state(&conn_guard)?;
+
+    Ok(RestoreResultDto {
+        cancelled: false,
+        dashboard: Some(dash),
+        message: format!("✓ Đã khôi phục dữ liệu từ: {}", src_path.display()),
+    })
+}
+
+fn resolve_widget_exe_path() -> Option<std::path::PathBuf> {
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(cur) = std::env::current_exe() {
+        if let Some(dir) = cur.parent() {
+            candidates.push(dir.join("XD4TIeltsBar.exe"));
+            candidates.push(dir.join("resources").join("XD4TIeltsBar.exe"));
+            candidates.push(dir.join("..").join("..").join("..").join("taskbar-widget").join("XD4TIeltsBar.exe"));
+        }
+    }
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        candidates.push(
+            std::path::PathBuf::from(local)
+                .join("XD4T-1ELTS")
+                .join("XD4TIeltsBar.exe"),
+        );
+    }
+    candidates.push(std::path::PathBuf::from("taskbar-widget").join("XD4TIeltsBar.exe"));
+    candidates.into_iter().find(|p| p.exists())
+}
+
+#[cfg(target_os = "windows")]
+fn hidden_cmd(program: &str) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    let mut cmd = std::process::Command::new(program);
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
+
+#[cfg(not(target_os = "windows"))]
+fn hidden_cmd(program: &str) -> std::process::Command {
+    std::process::Command::new(program)
+}
+
+fn is_widget_running() -> bool {
+    let Ok(out) = hidden_cmd("tasklist")
+        .args(["/FI", "IMAGENAME eq XD4TIeltsBar.exe", "/NH"])
+        .output()
+    else {
+        return false;
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    text.to_ascii_lowercase().contains("xd4tieltsbar.exe")
+}
+
+fn is_widget_autostart() -> bool {
+    hidden_cmd("reg")
+        .args([
+            "query",
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+            "/v",
+            "XD4TIeltsBar",
+        ])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+#[tauri::command]
+fn get_widget_runtime_info() -> WidgetRuntimeInfo {
+    WidgetRuntimeInfo {
+        running: is_widget_running(),
+        autostart: is_widget_autostart(),
+        exe_found: resolve_widget_exe_path().is_some(),
+    }
+}
+
+#[tauri::command]
+fn set_widget_enabled(enabled: bool) -> Result<WidgetRuntimeInfo, String> {
+    if enabled {
+        let exe_path = resolve_widget_exe_path().ok_or_else(|| {
+            "Không tìm thấy XD4TIeltsBar.exe trong thư mục cài đặt.".to_string()
+        })?;
+        let quoted = format!("\"{}\"", exe_path.display());
+        let _ = hidden_cmd("reg")
+            .args([
+                "add",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                "/v",
+                "XD4TIeltsBar",
+                "/t",
+                "REG_SZ",
+                "/d",
+                &quoted,
+                "/f",
+            ])
+            .output();
+        if !is_widget_running() {
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
+                std::process::Command::new(&exe_path)
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .spawn()
+                    .map_err(|e| format!("Không thể khởi chạy Widget Taskbar: {e}"))?;
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                std::process::Command::new(&exe_path)
+                    .spawn()
+                    .map_err(|e| format!("Không thể khởi chạy Widget Taskbar: {e}"))?;
+            }
+        }
+    } else {
+        let _ = hidden_cmd("taskkill")
+            .args(["/F", "/IM", "XD4TIeltsBar.exe"])
+            .output();
+        let _ = hidden_cmd("reg")
+            .args([
+                "delete",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                "/v",
+                "XD4TIeltsBar",
+                "/f",
+            ])
+            .output();
+        let _ = hidden_cmd("schtasks")
+            .args(["/Delete", "/TN", "XD4T-IeltsBar", "/F"])
+            .output();
+    }
+    Ok(get_widget_runtime_info())
 }
 
 #[tauri::command]
@@ -429,6 +650,10 @@ pub fn run() {
             preview_roadmap_md,
             import_roadmap_md,
             export_current_roadmap_md,
+            export_db_backup,
+            import_db_backup,
+            get_widget_runtime_info,
+            set_widget_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

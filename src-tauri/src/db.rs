@@ -49,6 +49,16 @@ pub fn default_phase_labels() -> BTreeMap<i64, String> {
     map
 }
 
+pub fn normalize_theme(theme: &str) -> String {
+    match theme.trim() {
+        "dark" | "mono-dark" => "mono-dark".to_string(),
+        "light" | "mono-light" => "mono-light".to_string(),
+        "pastel-female" => "pastel-female".to_string(),
+        "pastel-male" => "pastel-male".to_string(),
+        _ => "pastel-male".to_string(),
+    }
+}
+
 pub fn data_dir() -> Result<PathBuf, String> {
     let base = std::env::var_os("APPDATA")
         .map(PathBuf::from)
@@ -56,6 +66,10 @@ pub fn data_dir() -> Result<PathBuf, String> {
     let dir = base.join("xd4t-ielts65");
     fs::create_dir_all(&dir).map_err(|e| format!("Failed to create data dir: {e}"))?;
     Ok(dir)
+}
+
+pub fn db_file_path() -> Result<PathBuf, String> {
+    Ok(data_dir()?.join("ielts65.db"))
 }
 
 pub fn open_and_init_db() -> Result<Connection, String> {
@@ -95,13 +109,14 @@ pub fn init_schema_and_seed(conn: &Connection, seed_path: Option<&Path>) -> Resu
 
         CREATE TABLE IF NOT EXISTS settings (
             id INTEGER PRIMARY KEY CHECK (id = 1),
-            theme TEXT NOT NULL DEFAULT 'dark',
+            theme TEXT NOT NULL DEFAULT 'pastel-male',
             gemini_api_key TEXT NOT NULL DEFAULT '',
             gemini_model TEXT NOT NULL DEFAULT 'gemini-3-flash-preview',
             exam_date TEXT NOT NULL DEFAULT '2027-05-15',
             reminder_time TEXT NOT NULL DEFAULT '21:00',
             autostart INTEGER NOT NULL DEFAULT 0,
-            target_band REAL NOT NULL DEFAULT 7.0
+            target_band REAL NOT NULL DEFAULT 7.0,
+            onboarding_done INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS daily_quests (
@@ -191,6 +206,42 @@ pub fn init_schema_and_seed(conn: &Connection, seed_path: Option<&Path>) -> Resu
     ] {
         let _ = conn.execute(col_sql, []);
     }
+
+    // Detect legacy v1.0/v1.1 DBs when adding onboarding_done column
+    let added_onboarding = conn
+        .execute(
+            "ALTER TABLE settings ADD COLUMN onboarding_done INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .is_ok();
+
+    if added_onboarding {
+        let has_legacy_data: bool = conn
+            .query_row(
+                "SELECT (length(trim(gemini_api_key)) > 0)
+                     OR (theme IN ('dark', 'light'))
+                     OR ((SELECT COUNT(*) FROM study_days) > 0)
+                     OR ((SELECT COUNT(*) FROM essays) > 0)
+                 FROM settings WHERE id = 1",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap_or(0)
+            != 0;
+        if has_legacy_data {
+            let _ = conn.execute("UPDATE settings SET onboarding_done = 1 WHERE id = 1", []);
+        }
+    }
+
+    // Backward-compatible theme migration: "dark" -> "mono-dark", "light" -> "mono-light"
+    let _ = conn.execute(
+        "UPDATE settings SET theme = 'mono-dark' WHERE id = 1 AND theme = 'dark'",
+        [],
+    );
+    let _ = conn.execute(
+        "UPDATE settings SET theme = 'mono-light' WHERE id = 1 AND theme = 'light'",
+        [],
+    );
 
     if let Some(path) = seed_path {
         import_seed_key_if_needed(conn, path)?;
@@ -369,14 +420,15 @@ pub fn ensure_today_quests(conn: &Connection, today: &str) -> Result<(), String>
 pub fn get_settings_raw(conn: &Connection) -> Result<Settings, String> {
     conn.query_row(
         "SELECT theme, gemini_api_key, gemini_model, exam_date, reminder_time, autostart, target_band,
-                writing_checklist_json, writing_focus_json, skill_targets_json, phase_labels_json
+                onboarding_done, writing_checklist_json, writing_focus_json, skill_targets_json, phase_labels_json
          FROM settings WHERE id = 1",
         [],
         |r| {
-            let chk_json: String = r.get(7)?;
-            let foc_json: String = r.get(8)?;
-            let tgt_json: String = r.get(9)?;
-            let ph_json: String = r.get(10)?;
+            let raw_theme: String = r.get(0)?;
+            let chk_json: String = r.get(8)?;
+            let foc_json: String = r.get(9)?;
+            let tgt_json: String = r.get(10)?;
+            let ph_json: String = r.get(11)?;
 
             let mut writing_checklist: Vec<String> =
                 serde_json::from_str(&chk_json).unwrap_or_default();
@@ -400,13 +452,14 @@ pub fn get_settings_raw(conn: &Connection) -> Result<Settings, String> {
             }
 
             Ok(Settings {
-                theme: r.get(0)?,
+                theme: normalize_theme(&raw_theme),
                 gemini_api_key: r.get(1)?,
                 gemini_model: r.get(2)?,
                 exam_date: r.get(3)?,
                 reminder_time: r.get(4)?,
                 autostart: r.get::<_, i64>(5)? != 0,
                 target_band: r.get(6)?,
+                onboarding_done: r.get::<_, i64>(7)? != 0,
                 writing_checklist,
                 writing_focus_notes,
                 skill_targets,
@@ -428,6 +481,7 @@ pub fn get_settings_public(conn: &Connection) -> Result<SettingsPublic, String> 
         reminder_time: s.reminder_time,
         autostart: s.autostart,
         target_band: s.target_band,
+        onboarding_done: s.onboarding_done,
         writing_checklist: s.writing_checklist,
         writing_focus_notes: s.writing_focus_notes,
         phase_labels: s.phase_labels,
@@ -449,9 +503,12 @@ pub fn update_settings(
     reminder_time: Option<String>,
     autostart: Option<bool>,
     target_band: Option<f64>,
+    onboarding_done: Option<bool>,
 ) -> Result<SettingsPublic, String> {
     let cur = get_settings_raw(conn)?;
-    let new_theme = theme.unwrap_or(cur.theme);
+    let new_theme = theme
+        .map(|t| normalize_theme(&t))
+        .unwrap_or(cur.theme);
     let new_key = match gemini_api_key {
         Some(k) if !k.trim().is_empty() => k.trim().to_string(),
         Some(_) => cur.gemini_api_key,
@@ -468,11 +525,12 @@ pub fn update_settings(
         .unwrap_or(cur.reminder_time);
     let new_auto = autostart.unwrap_or(cur.autostart);
     let new_target = target_band.unwrap_or(cur.target_band);
+    let new_onboarding = onboarding_done.unwrap_or(cur.onboarding_done);
 
     conn.execute(
         "UPDATE settings
          SET theme = ?1, gemini_api_key = ?2, gemini_model = ?3, exam_date = ?4,
-             reminder_time = ?5, autostart = ?6, target_band = ?7
+             reminder_time = ?5, autostart = ?6, target_band = ?7, onboarding_done = ?8
          WHERE id = 1",
         params![
             new_theme,
@@ -481,7 +539,8 @@ pub fn update_settings(
             new_exam,
             new_rem,
             if new_auto { 1 } else { 0 },
-            new_target
+            new_target,
+            if new_onboarding { 1 } else { 0 }
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -964,6 +1023,7 @@ pub fn get_dashboard_state(conn: &Connection) -> Result<DashboardState, String> 
 
 #[derive(serde::Serialize)]
 pub struct WidgetStatus {
+    pub theme: String,
     pub quests_done: i64,
     pub quests_total: i64,
     pub streak: i64,
@@ -1295,6 +1355,7 @@ pub fn build_widget_status(conn: &Connection) -> Result<WidgetStatus, String> {
     let overall_band = ((sum_band / 4.0) * 2.0).round() / 2.0;
 
     Ok(WidgetStatus {
+        theme: settings.theme,
         quests_done,
         quests_total,
         streak,
@@ -1304,6 +1365,49 @@ pub fn build_widget_status(conn: &Connection) -> Result<WidgetStatus, String> {
         today_minutes,
         updated_at: Local::now().to_rfc3339(),
     })
+}
+
+pub fn checkpoint_and_copy_backup(
+    conn: &Connection,
+    src_path: &Path,
+    dest_path: &Path,
+) -> Result<(), String> {
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .map_err(|e| format!("Không thể đồng bộ WAL trước khi sao lưu: {e}"))?;
+    fs::copy(src_path, dest_path)
+        .map_err(|e| format!("Không thể ghi file sao lưu: {e}"))?;
+    Ok(())
+}
+
+pub fn validate_backup_file(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Err("File sao lưu không tồn tại.".to_string());
+    }
+    let test_conn = Connection::open_with_flags(
+        path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .map_err(|e| format!("Không thể mở file sao lưu (có thể không phải file SQLite): {e}"))?;
+
+    let integrity: String = test_conn
+        .query_row("PRAGMA integrity_check", [], |r| r.get(0))
+        .map_err(|e| format!("File sao lưu bị lỗi hoặc không phải cơ sở dữ liệu SQLite hợp lệ: {e}"))?;
+    if !integrity.eq_ignore_ascii_case("ok") {
+        return Err(format!("Kiểm tra toàn vẹn thất bại: {integrity}"));
+    }
+
+    let table_count: i64 = test_conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table' AND name IN ('settings', 'vocab_cards', 'roadmap_items')",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| format!("Không đọc được cấu trúc bảng trong file: {e}"))?;
+    if table_count < 3 {
+        return Err("File .db này không phải bản sao lưu của XD4T IELTS (thiếu bảng dữ liệu cốt lõi).".to_string());
+    }
+    Ok(())
 }
 
 pub fn write_widget_status(conn: &Connection) -> Result<(), String> {
@@ -1411,5 +1515,84 @@ mod tests {
         assert!(exported.contains("## Nhiệm vụ hàng ngày"));
         assert!(exported.contains("## Checklist Writing cá nhân"));
         assert!(exported.contains("### GĐ1:"));
+    }
+
+    #[test]
+    fn new_db_defaults_to_pastel_male_and_onboarding_false() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema_and_seed(&conn, None).unwrap();
+        let s = get_settings_public(&conn).unwrap();
+        assert_eq!(s.theme, "pastel-male");
+        assert!(!s.onboarding_done);
+        let ws = build_widget_status(&conn).unwrap();
+        assert_eq!(ws.theme, "pastel-male");
+    }
+
+    #[test]
+    fn legacy_db_migrates_dark_light_and_onboarding_done() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                theme TEXT NOT NULL DEFAULT 'dark',
+                gemini_api_key TEXT NOT NULL DEFAULT '',
+                gemini_model TEXT NOT NULL DEFAULT 'gemini-3-flash-preview',
+                exam_date TEXT NOT NULL DEFAULT '2027-05-15',
+                reminder_time TEXT NOT NULL DEFAULT '21:00',
+                autostart INTEGER NOT NULL DEFAULT 0,
+                target_band REAL NOT NULL DEFAULT 7.0
+            );
+            INSERT INTO settings (id, theme, gemini_api_key) VALUES (1, 'dark', 'AQ.TestLegacyKey');",
+        )
+        .unwrap();
+
+        init_schema_and_seed(&conn, None).unwrap();
+        let s = get_settings_public(&conn).unwrap();
+        assert_eq!(s.theme, "mono-dark");
+        assert!(s.onboarding_done);
+
+        let updated = update_settings(
+            &conn,
+            Some("light".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(updated.theme, "mono-light");
+    }
+
+    #[test]
+    fn backup_and_restore_validation_checks_integrity_and_schema() {
+        let temp_dir = std::env::temp_dir().join("xd4t_backup_test");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let src_db = temp_dir.join("src.db");
+        let bak_db = temp_dir.join("bak.db");
+        let bad_db = temp_dir.join("bad.db");
+        let wrong_db = temp_dir.join("wrong.db");
+
+        {
+            let conn = Connection::open(&src_db).unwrap();
+            init_schema_and_seed(&conn, None).unwrap();
+            checkpoint_and_copy_backup(&conn, &src_db, &bak_db).unwrap();
+        }
+        validate_backup_file(&bak_db).unwrap();
+
+        fs::write(&bad_db, b"not a sqlite file").unwrap();
+        assert!(validate_backup_file(&bad_db).is_err());
+
+        {
+            let wrong = Connection::open(&wrong_db).unwrap();
+            wrong.execute("CREATE TABLE unrelated (id INTEGER PRIMARY KEY)", []).unwrap();
+        }
+        assert!(validate_backup_file(&wrong_db).is_err());
+
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }

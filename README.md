@@ -1,134 +1,117 @@
-# XD4T // IELTS 6.5 (`XD4T-1ELTS`)
+# XD4T IELTS 6.5 (`XD4T-1ELTS`)
 
-Ứng dụng desktop siêu nhẹ dành cho Windows 11 giúp luyện **IELTS Band 6.5+** mỗi ngày trong 30 phút — thiết kế tối giản **Monochrome Đen/Trắng**, lưu trữ 100% cục bộ bằng **SQLite**, tích hợp **AI chấm Writing 4 tiêu chí** và **Widget Taskbar Windows 11** tự né nút Thời tiết.
+Ứng dụng học **IELTS Band 6.5+** siêu nhẹ cho Windows 10/11 — mỗi ngày chỉ **30 phút**, lưu tiến độ hoàn toàn trên máy bạn, có **4 giao diện dịu mắt** (**Pastel Nam**, **Pastel Nữ**, **Mono Đen**, **Mono Trắng**), **chấm Writing bằng AI** và **thanh Widget nhỏ trên Taskbar Windows**.
 
-![Tauri v2](https://img.shields.io/badge/Tauri-v2-24C8D8?style=flat-square&logo=tauri&logoColor=white)
-![Rust](https://img.shields.io/badge/Rust-SQLite-DEA584?style=flat-square&logo=rust&logoColor=black)
-![TypeScript](https://img.shields.io/badge/TypeScript-Vite-3178C6?style=flat-square&logo=typescript&logoColor=white)
-![Windows 11](https://img.shields.io/badge/Windows-11%20x64-0078D4?style=flat-square&logo=windows&logoColor=white)
-![License: MIT](https://img.shields.io/badge/License-MIT-22c55e?style=flat-square)
+> **[⬇️ Tải ngay bộ cài 1-file: XD4T-1ELTS-v1.2.0-Setup.exe](../../releases/latest/download/XD4T-1ELTS-v1.2.0-Setup.exe)** *(Windows 10/11 · Hoàn toàn miễn phí · Không cần cài thêm phần mềm khác)*
 
 ---
 
-## Giao diện thực tế
+## Cài đặt chỉ trong 30 giây (3 bước)
 
-### Dashboard Hôm Nay & Widget Taskbar Win11
-![Dashboard Dark](docs/screenshots/01-dashboard-dark.png)
+1. **Bấm tải** file **`XD4T-1ELTS-v1.2.0-Setup.exe`** ở nút phía trên.
+2. **Bấm đúp** để mở file vừa tải → bấm **Next → Install → Finish** *(không cần quyền Admin)*.
+   > **Lưu ý thân thiện:** Vì đây là phần mềm mã nguồn mở miễn phí (chưa mua chứng chỉ ký số thương mại), nếu Windows hiện màn hình xanh **"Windows protected your PC"**, bạn chỉ cần bấm **More info** (Thông tin thêm) → **Run anyway** (Vẫn chạy) là cài bình thường.
+3. **Mở ứng dụng** từ Desktop hoặc Start Menu → chọn màu **Pastel Nam / Pastel Nữ / Mono** trong màn hình Chào mừng → **bắt đầu học ngay!**
 
-![Taskbar Widget](docs/screenshots/07-taskbar-widget-dark.png)
+---
 
-### Writing Lab + Chấm Band 6.5 bằng Gemini AI
-![Writing AI Dark](docs/screenshots/02-writing-ai-dark.png)
+## Giao diện 3 phong cách (Pastel Nam · Pastel Nữ · XD4T Mono)
 
-### Từ vựng SRS (SM-2 Offline) & Lộ trình 24 tuần + Sổ lỗi
-| Flashcard SRS (SM-2) | Lộ trình 24 tuần & Sổ lỗi |
+### Màn hình Chào mừng & Dashboard Pastel Nam (Mặc định · Sky & Mint)
+| Thiết lập nhanh 3 bước cho người mới | Dashboard Hôm Nay (Pastel Nam) |
 |---|---|
-| ![Vocab SRS](docs/screenshots/03-vocab-srs-dark.png) | ![Roadmap & Error Log](docs/screenshots/04-roadmap-errors-dark.png) |
+| ![Welcome Wizard Pastel Male](docs/screenshots/01-welcome-pastel-male.png) | ![Dashboard Pastel Male](docs/screenshots/02-dashboard-pastel-male.png) |
 
-### Modal Nhập điểm, Nạp lộ trình `.md` & Cài đặt (Dark / Light Mode)
-| Nhập điểm đề vừa làm (Dark) | Cài đặt & Test API (Dark) |
+### Pastel Nữ (Sakura & Peach) — Dịu dàng, ấm áp
+| Dashboard Hôm Nay (Pastel Nữ) | Phòng luyện Writing + Chấm AI (Pastel Nữ) |
 |---|---|
-| ![Score Modal Dark](docs/screenshots/05-modal-score-dark.png) | ![Settings API Test Dark](docs/screenshots/03-settings-api-test-dark.png) |
+| ![Dashboard Pastel Female](docs/screenshots/03-dashboard-pastel-female.png) | ![Writing AI Pastel Female](docs/screenshots/04-writing-pastel-female.png) |
 
-| Nạp lộ trình `.md` (Dark) | Nạp lộ trình `.md` (Light) |
+### Cài đặt, Sao lưu 1-Click & Thanh Widget Taskbar đồng bộ màu
+| Cài đặt & Sao lưu / Khôi phục ngay trong App | Widget Taskbar Windows đồng bộ màu Pastel |
 |---|---|
-| ![Import Roadmap Dark](docs/screenshots/01-import-roadmap-dark.png) | ![Import Roadmap Light](docs/screenshots/02-import-roadmap-light.png) |
+| ![Settings & Backup](docs/screenshots/05-settings-backup-pastel-male.png) | ![Taskbar Widget Pastel](docs/screenshots/06-taskbar-pastel.png) |
+
+*(Bạn vẫn có thể chuyển sang **XD4T Mono Đen / Trắng** góc vuông bất cứ lúc nào ngay trên thanh trên cùng của ứng dụng.)*
 
 ---
 
-## Tính năng nổi bật
+## Tính năng chính dành cho người tự học
 
-- **Siêu nhẹ, khởi động tức thì:** App chính ~14 MB RAM (Rust + Tauri v2 + WebView2), Widget Taskbar ~8 MB RAM (WinForms .NET 4.x thuần).
-- **Phong cách XD4T Monochrome Đen / Trắng:** Chuyển đổi tức thì giữa Dark & Light mode, hỗ trợ phím `Escape` / bấm nền ngoài để đóng modal.
-- **Tab `[1] HÔM NAY`:** 3 nhiệm vụ 30 phút/ngày, Heatmap chuỗi học 10 tuần, đếm ngược ngày thi, Pomodoro 15:00 tích hợp.
-- **Tab `[2] WRITING + AI`:** Luyện đoạn 90 từ, Task 1 (150+), Task 2 (250+) kèm gợi ý khung bài 6.5, checklist soát lỗi 3 phút, chấm điểm 4 tiêu chí (`TA / CC / LR / GRA`) qua Gemini API hoặc nút **Copy Prompt** dùng miễn phí trên web, và lưu lỗi thẳng vào Sổ lỗi.
-- **Tab `[3] TỪ VỰNG SRS`:** 40+ thẻ collocation/từ vựng Band 6.5 chạy thuật toán **SM-2 offline** (`Quên / Khó / Nhớ / Dễ`).
-- **Tab `[4] LỘ TRÌNH & SỔ LỖI`:** Lộ trình 24 tuần 4 giai đoạn (Cambridge / Simon / Linearthinking), theo dõi điểm đề thi thử, và Sổ lỗi tự gom từ Writing.
-- **System Tray & Taskbar Widget Win11:** Tự nhắc học mỗi ngày theo giờ cấu hình; thanh widget ghim gọn bên trái Taskbar, tự động dò UIA để né nút Thời tiết/Widgets.
+- **Học gọn 30 phút mỗi ngày:** 3 nhiệm vụ rõ ràng, đếm ngược Pomodoro 15 phút, Heatmap chuỗi ngày học để không bị đứt nhịp.
+- **Chấm Writing 4 tiêu chí (`TA / CC / LR / GRA`):** Hỗ trợ gợi ý khung bài Band 6.5, checklist soát lỗi 3 phút, sửa lỗi trực tiếp và bài mẫu nâng Band.
+- **Từ vựng SRS thông minh (Offline):** 40+ collocation Band 6.5 tự động lặp lại ngắt quãng (`Quên / Khó / Nhớ / Dễ`).
+- **Lộ trình 24 tuần & Sổ lỗi:** Theo dõi tiến độ từng tuần, lưu điểm đề thi thử và gom các lỗi hay mắc.
+- **Widget Taskbar Windows 11:** Thanh nhỏ gọn hiển thị số nhiệm vụ xong hôm nay, chuỗi ngày học và Band hiện tại ngay cạnh nút Thời tiết (có thể bật/tắt bằng 1 cú click trong **Cài đặt**).
 
 ---
 
-## Cá nhân hóa lộ trình bằng file `.md` + AI
+## Cá nhân hóa lộ trình với ChatGPT / Gemini
 
-Bất kỳ ai tải app đều có thể tạo lộ trình riêng theo band đầu vào, mục tiêu và ngày thi của mình trong 1 phút:
+App đã có sẵn **Lộ trình mẫu 24 tuần (Band 6.5)** dùng được ngay. Nếu muốn lộ trình riêng theo điểm đầu vào và ngày thi của bạn:
 
-1. Mở tab **`[4] LỘ TRÌNH & SỔ LỖI`** → bấm **`+ NẠP LỘ TRÌNH .MD`**.
-2. Bấm **`COPY PROMPT TẠO LỘ TRÌNH CHO AI`** (hoặc xem trực tiếp tại [docs/PROMPT-TAO-LO-TRINH.md](docs/PROMPT-TAO-LO-TRINH.md)), dán vào ChatGPT / Claude / Gemini web. AI sẽ hỏi 5 câu ngắn rồi xuất ra file `lo-trinh.md` chuẩn [docs/lo-trinh-mau.md](docs/lo-trinh-mau.md).
-3. Dán nội dung hoặc chọn file `.md` → bấm **`PHÂN TÍCH & XEM TRƯỚC`** → bấm **`ÁP DỤNG LỘ TRÌNH NGAY`**. Toàn bộ 4 tab, nhiệm vụ hàng ngày, Checklist Writing và tiêu chí AI soi lỗi sẽ tự động cập nhật theo lộ trình của bạn.
-
----
-
-## Tự nạp & kiểm tra Gemini API Key cá nhân
-
-1. Mở **`CÀI ĐẶT`** (hoặc bấm nút **`NẠP API KEY`** trên thanh nhắc ở Tab Hôm nay).
-2. Bấm **`↗ LẤY KEY MIỄN PHÍ TẠI GOOGLE AI STUDIO`** để tạo key miễn phí (`AIza...`).
-3. Dán trực tiếp vào ô nhập (có nút **`HIỆN/ẨN`**) hoặc bấm **`NẠP KEY TỪ FILE .TXT/.ENV`**.
-4. Bấm **`KIỂM TRA KẾT NỐI API`** để app test sống qua HTTP header `x-goog-api-key` (không truyền key trên URL) trước khi lưu. Nếu chưa muốn dùng key, bạn vẫn có thể dùng nút **`COPY PROMPT CHẤM AI`** hoàn toàn miễn phí.
+1. Mở tab **`[4] LỘ TRÌNH & SỔ LỖI`** → bấm **`+ NẠP LỘ TRÌNH .MD`** (hoặc bấm ngay ở **Bước 2** trong màn hình Chào mừng).
+2. Bấm **`COPY PROMPT TẠO LỘ TRÌNH CHO AI`** và dán vào **ChatGPT / Gemini / Claude**. AI sẽ hỏi 5 câu ngắn rồi tạo sẵn file `lo-trinh.md` cho bạn.
+3. Bấm **`CHỌN FILE .MD TỪ MÁY`** (hoặc dán nội dung vào khung) → **`PHÂN TÍCH & XEM TRƯỚC`** → **`ÁP DỤNG LỘ TRÌNH NGAY`**.
 
 ---
 
-## Cài đặt siêu nhanh (1-Click cho máy mới / sau khi reset Windows)
+## Lấy Gemini API Key miễn phí (để AI tự chấm bài)
 
-Không cần cài Rust hay Node.js:
+1. Mở **`CÀI ĐẶT`** → bấm **`↗ LẤY KEY MIỄN PHÍ TẠI GOOGLE AI STUDIO`**.
+2. Đăng nhập Google → bấm **Create API key** → copy chuỗi key (`AIza...`).
+3. Dán vào ô **Gemini API Key** trong app → bấm **`KIỂM TRA KẾT NỐI API`** → **`LƯU CÀI ĐẶT`**.
+   *(Không muốn tạo key? Bạn vẫn dùng nút **`COPY PROMPT CHẤM AI`** ở tab Writing để dán sang ChatGPT/Gemini web hoàn toàn miễn phí!)*
 
-1. Tải **`XD4T-1ELTS-v1.1.0-win-x64.zip`** từ trang [**GitHub Releases**](../../releases) và giải nén.
-2. Mở PowerShell tại thư mục vừa giải nén và chạy:
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File .\install.ps1
-   ```
-   *(Tùy chọn: thêm `-NoWidget` nếu không muốn cài Widget Taskbar, hoặc `-NoAutostart` nếu không muốn tự khởi động widget cùng Windows.)*
-3. Mở **XD4T IELTS 6.5** từ Desktop hoặc Start Menu → bấm **CÀI ĐẶT** → dán **Gemini API Key** (tạo miễn phí tại Google AI Studio) và chọn ngày thi là dùng ngay.
+---
 
-Để gỡ cài đặt (giữ nguyên dữ liệu học):
+## Sao lưu dữ liệu trước khi đổi máy / cài lại Windows
+
+Bạn **không cần gõ bất kỳ câu lệnh nào**:
+- Mở **`CÀI ĐẶT`** → mục **Dữ liệu học tập & Widget Taskbar**:
+  - Bấm **`💾 Xuất file sao lưu (.db)`** để lưu toàn bộ tiến độ, từ vựng SRS, điểm thi và sổ lỗi thành 1 file `.db` cất vào USB / Google Drive.
+  - Khi sang máy mới hoặc cài lại Windows, cài xong app chỉ cần bấm **`📂 Khôi phục từ file (.db)`** và chọn lại file đó là nguyên vẹn 100%!
+
+---
+
+## Hỏi đáp nhanh (FAQ)
+
+- **App có cần mạng Internet để học không?**
+  Không! Từ vựng SRS, lộ trình, nhiệm vụ hàng ngày, Pomodoro và sổ lỗi đều chạy 100% offline trên máy bạn. Chỉ cần mạng khi bấm **Chấm Writing bằng Gemini AI**.
+- **Gỡ cài đặt có làm mất tiến độ đang học không?**
+  Không. Bộ gỡ cài đặt chuẩn trong *Windows Settings → Apps* sẽ giữ lại dữ liệu học của bạn ở `%APPDATA%\xd4t-ielts65\ielts65.db` để khi cài lại không bị mất bài.
+- **Widget Taskbar có đè lên nút Thời tiết hay làm chậm máy không?**
+  Widget tự động dò vị trí nút Thời tiết của Windows 11 để né sang bên cạnh, tiêu tốn chưa tới 10 MB RAM. Nếu không thích, bạn có thể tắt ngay bằng công tắc trong **Cài đặt**.
+
+---
+
+<details>
+<summary><b>Dành cho lập trình viên: Tự build từ mã nguồn, kiến trúc & script PowerShell</b></summary>
+
+### Kiến trúc kỹ thuật
+- **Desktop App:** Rust + Tauri v2 + TypeScript + Vite + SQLite (`rusqlite` bundled, WAL mode).
+- **Taskbar Widget:** `XD4TIeltsBar.exe` (.NET Framework 4.x WinForms + UIAutomation, đồng bộ thời gian thực qua `%APPDATA%\xd4t-ielts65\widget-status.json`).
+- **Bộ cài:** Tauri NSIS (`currentUser` mode, không yêu cầu UAC Admin, kèm `src-tauri/nsis/hooks.nsh`).
+
+### Build từ mã nguồn (Windows)
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
-```
-*(Thêm `-PurgeData` nếu muốn xóa luôn cơ sở dữ liệu học tập.)*
-
----
-
-## Sao lưu & Khôi phục dữ liệu học khi reset máy
-
-Trước khi cài lại Windows, sao lưu toàn bộ tiến độ, streak, từ vựng SRS, điểm thi và sổ lỗi thành 1 file `.db` duy nhất:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\backup-db.ps1
-```
-
-Sau khi reset máy và chạy `install.ps1`, khôi phục lại dữ liệu cũ bằng 1 lệnh:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\restore-db.ps1 -BackupFile .\ielts65-backup-YYYYMMDD-HHMM.db
-```
-
----
-
-## Tự build từ mã nguồn (Developer)
-
-Yêu cầu trên Windows 11:
-- **Node.js** (v18+)
-- **Rust** (`rustup` + `cargo`)
-- **Visual Studio Build Tools** (Desktop development with C++)
-- **Microsoft Edge WebView2 Runtime** (có sẵn trên Windows 11)
-
-```powershell
+# 1. Cài dependencies frontend
 npm install
-npm run build
-cargo test --manifest-path src-tauri\Cargo.toml
-npx tauri build
+
+# 2. Build Taskbar Widget
 powershell -ExecutionPolicy Bypass -File .\taskbar-widget\build.ps1
+
+# 3. Chạy unit test Rust
+cd src-tauri
+cargo test
+cd ..
+
+# 4. Build bộ cài 1-file NSIS (kèm remap path chống lộ đường dẫn cá nhân)
+$env:RUSTFLAGS = "--remap-path-prefix=$env:USERPROFILE\.cargo=/cargo --remap-path-prefix=$env:USERPROFILE=/user --remap-path-prefix=$PWD=/src"
+npx tauri build
 ```
 
----
+### Script PowerShell hỗ trợ (tùy chọn)
+Repo vẫn giữ các script tiện ích cho người dùng nâng cao: `install.ps1`, `uninstall.ps1`, `backup-db.ps1`, `restore-db.ps1`.
 
-## Bảo mật & Quyền riêng tư
-
-- **100% Local-First:** Toàn bộ dữ liệu học tập, bài viết, thẻ từ vựng và cài đặt lưu cục bộ tại `%APPDATA%\xd4t-ielts65\ielts65.db`.
-- **Không Telemetry:** Ứng dụng không gửi dữ liệu phân tích hay sử dụng về máy chủ bên thứ ba.
-- **API Key an toàn:** Gemini API Key chỉ lưu trên máy người dùng và chỉ gửi trực tiếp tới Google Gemini API khi bạn bấm nút chấm bài.
-
----
-
-## Kiến trúc mở rộng (`track`)
-
-Cơ sở dữ liệu SQLite sử dụng cột `track` (mặc định `'ielts'`) ở các bảng `daily_quests`, `study_days`, `vocab_cards`, và `roadmap_items`. Nhờ thiết kế này, ứng dụng có thể dễ dàng gắn thêm các lộ trình học song song khác (ví dụ: `plc`, `aiot`, `japanese`) mà không cần thay đổi cấu trúc bảng.
+</details>

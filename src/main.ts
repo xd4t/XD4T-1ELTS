@@ -4,15 +4,70 @@ import { listen } from '@tauri-apps/api/event';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import type {
   ApiTestResult,
+  BackupResultDto,
   DashboardState,
   GradeResponseDto,
   GradeResult,
+  RestoreResultDto,
   RoadmapPreview,
   VocabCard,
+  WidgetRuntimeInfo,
   WritingPrompt,
 } from './types';
 
+type ThemeId = 'pastel-male' | 'pastel-female' | 'mono-dark' | 'mono-light';
+
+const THEME_OPTIONS: { id: ThemeId; label: string; sub: string; swatches: string[] }[] = [
+  {
+    id: 'pastel-male',
+    label: 'Pastel Nam · Sky & Mint',
+    sub: 'Dịu mắt, hiện đại (mặc định)',
+    swatches: ['#3B82A0', '#52A68C', '#F2F7F6'],
+  },
+  {
+    id: 'pastel-female',
+    label: 'Pastel Nữ · Sakura & Peach',
+    sub: 'Ấm áp, tinh tế, bo góc mềm',
+    swatches: ['#D67A89', '#E59876', '#FDF6F5'],
+  },
+  {
+    id: 'mono-dark',
+    label: 'XD4T Mono · Đen',
+    sub: 'Góc vuông 0px, tương phản cao',
+    swatches: ['#0B0B0B', '#F4F4F4', '#2E2E2E'],
+  },
+  {
+    id: 'mono-light',
+    label: 'XD4T Mono · Trắng',
+    sub: 'Góc vuông 0px, sáng sắc nét',
+    swatches: ['#FFFFFF', '#111111', '#D4D4D4'],
+  },
+];
+
+function normalizeTheme(raw: string): ThemeId {
+  if (raw === 'dark' || raw === 'mono-dark') return 'mono-dark';
+  if (raw === 'light' || raw === 'mono-light') return 'mono-light';
+  if (raw === 'pastel-female') return 'pastel-female';
+  return 'pastel-male';
+}
+
+function renderThemeCards(currentTheme: ThemeId, btnClass: string): string {
+  return `<div class="theme-cards-grid">
+    ${THEME_OPTIONS.map(
+      (t) => `
+      <button type="button" class="theme-card ${btnClass} ${currentTheme === t.id ? 'active' : ''}" data-pick-theme="${t.id}">
+        <div class="theme-card-head">
+          ${t.swatches.map((c) => `<span class="swatch-dot" style="background:${c}"></span>`).join('')}
+          <span>${esc(t.label)}</span>
+        </div>
+        <div class="theme-card-sub">${esc(t.sub)}</div>
+      </button>`
+    ).join('')}
+  </div>`;
+}
+
 let dash: DashboardState | null = null;
+let widgetInfo: WidgetRuntimeInfo = { running: false, autostart: false, exe_found: true };
 let activeTab: 'today' | 'writing' | 'vocab' | 'roadmap' = 'today';
 let writingMode = 'paragraph_90';
 let selectedPromptId = 'p90-1';
@@ -34,6 +89,16 @@ let roadmapDraftMd = '';
 let roadmapPreview: RoadmapPreview | null = null;
 let roadmapStatusMsg = '';
 let roadmapStatusOk: boolean | null = null;
+
+let welcomeOpen = false;
+let welcomeStep = 1;
+let welcomeMsg = '';
+let welcomeOk: boolean | null = null;
+let welcomeKeyDraft = '';
+
+let backupMsg = '';
+let backupOk: boolean | null = null;
+let widgetStatusMsg = '';
 
 let pomoSecs = 15 * 60;
 let pomoTimer: number | null = null;
@@ -72,8 +137,8 @@ function getCurrentPrompt(): WritingPrompt | undefined {
 
 function renderApp() {
   if (!dash) return;
-  const isLight = dash.settings.theme === 'light';
-  document.documentElement.classList.toggle('light', isLight);
+  const curTheme = normalizeTheme(dash.settings.theme);
+  document.documentElement.className = `theme-${curTheme}`;
   const doneQuests = dash.quests.filter((q) => q.done).length;
   const totalQuests = dash.quests.length || 1;
   const questPct = Math.round((doneQuests / totalQuests) * 100);
@@ -89,17 +154,21 @@ function renderApp() {
 
   const root = document.getElementById('app')!;
   root.innerHTML = `
-  <div class="app-shell ${isLight ? 'light' : ''}" id="shell">
+  <div class="app-shell theme-${curTheme}" id="shell">
     <div class="titlebar">
       <div class="tb-left">
         <div class="brand-pill">XD4T // IELTS 6.5</div>
-        <div class="stat-pill"><span>THI ${esc(dash.settings.exam_date)}:</span> <b>${dash.days_until_exam}d</b></div>
-        <div class="stat-pill"><span>STREAK:</span> <b>${dash.streak} ngày</b></div>
+        <div class="stat-pill"><span>THI ${esc(dash.settings.exam_date)}:</span> <b class="mono-num">${dash.days_until_exam}d</b></div>
+        <div class="stat-pill"><span>STREAK:</span> <b class="mono-num">${dash.streak} ngày</b></div>
         <div class="stat-pill"><span>API:</span> <b>${dash.settings.has_api_key ? 'SẴN SÀNG' : 'CHƯA CÓ KEY'}</b></div>
       </div>
       <div class="tb-right">
-        <button class="btn btn-sm" id="pomoBtn" title="Bật/tạm dừng đếm ngược 15 phút">⏱ ${formatPomo(pomoSecs)}</button>
-        <button class="btn btn-sm" id="themeBtn">${isLight ? 'ĐỔI NỀN: ĐEN' : 'ĐỔI NỀN: TRẮNG'}</button>
+        <button class="btn btn-sm mono-num" id="pomoBtn" title="Bật/tạm dừng đếm ngược 15 phút">⏱ ${formatPomo(pomoSecs)}</button>
+        <select class="theme-select" id="themeSelect" title="Đổi giao diện tức thì">
+          ${THEME_OPTIONS.map(
+            (t) => `<option value="${t.id}" ${curTheme === t.id ? 'selected' : ''}>🎨 ${esc(t.label)}</option>`
+          ).join('')}
+        </select>
         <button class="btn btn-sm" id="openSettingsBtn">CÀI ĐẶT</button>
       </div>
     </div>
@@ -389,8 +458,28 @@ function renderApp() {
 
     <!-- SETTINGS MODAL -->
     <div class="modal-backdrop" id="settingsModal">
-      <div class="modal-box">
-        <div class="box-title"><span>CÀI ĐẶT HỆ THỐNG & API CÁ NHÂN</span><button class="btn btn-sm" id="closeSettingsBtn">✕</button></div>
+      <div class="modal-box modal-wide">
+        <div class="box-title"><span>CÀI ĐẶT HỆ THỐNG & DỮ LIỆU</span><button class="btn btn-sm" id="closeSettingsBtn">✕</button></div>
+
+        <div class="form-row">
+          <label>Chọn giao diện (4 phong cách · đổi tức thì)</label>
+          ${renderThemeCards(curTheme, 'settings-theme-card')}
+        </div>
+
+        <div class="step-card">
+          <div class="step-head"><span>Dữ liệu học tập & Widget Taskbar Windows</span></div>
+          <div class="data-actions-row">
+            <button class="btn btn-sm" id="exportBackupBtn" type="button">💾 Xuất file sao lưu (.db)</button>
+            <button class="btn btn-sm" id="importBackupBtn" type="button">📂 Khôi phục từ file (.db)</button>
+          </div>
+          ${backupMsg ? `<div class="status-msg ${backupOk === true ? 'ok' : backupOk === false ? 'err' : ''}">${esc(backupMsg)}</div>` : ''}
+          <label class="switch-row" style="margin-top:8px;">
+            <input type="checkbox" id="setWidgetEnabled" ${widgetInfo.running || widgetInfo.autostart ? 'checked' : ''} />
+            <span>Hiện thanh Widget nhỏ trên Taskbar Windows (tự khởi động cùng máy)</span>
+          </label>
+          ${widgetStatusMsg ? `<div class="status-msg">${esc(widgetStatusMsg)}</div>` : ''}
+        </div>
+
         <div class="guide-box">
           <b>Hướng dẫn lấy Gemini API Key miễn phí (3 bước):</b><br/>
           1. Bấm nút bên dưới để mở Google AI Studio và đăng nhập Google.<br/>
@@ -435,12 +524,83 @@ function renderApp() {
           <label for="setAutostart" style="margin:0;cursor:pointer;">Tự khởi động cùng Windows</label>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-top:14px;flex-wrap:wrap;">
-          <button class="btn btn-sm" id="settingsToRoadmapBtn" type="button">+ NẠP LỘ TRÌNH .MD</button>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button class="btn btn-sm" id="settingsToRoadmapBtn" type="button">+ NẠP LỘ TRÌNH .MD</button>
+            <button class="btn btn-sm" id="reopenWelcomeBtn" type="button">Mở lại hướng dẫn bắt đầu</button>
+          </div>
           <div style="display:flex;gap:6px;">
             <button class="btn" id="cancelSettingsBtn">HỦY</button>
             <button class="btn btn-primary" id="saveSettingsBtn">LƯU CÀI ĐẶT</button>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- WELCOME WIZARD MODAL -->
+    <div class="modal-backdrop ${welcomeOpen ? 'open' : ''}" id="welcomeModal">
+      <div class="modal-box modal-wide">
+        <div class="box-title">
+          <span>CHÀO MỪNG TỚI XD4T IELTS · THIẾT LẬP NHANH (${welcomeStep}/3)</span>
+          <button class="btn btn-sm" id="skipWelcomeBtn" type="button">Bỏ qua</button>
+        </div>
+
+        <div class="wizard-steps">
+          <div class="wizard-step-pill ${welcomeStep === 1 ? 'active' : welcomeStep > 1 ? 'done' : ''}">1. Chọn phong cách</div>
+          <div class="wizard-step-pill ${welcomeStep === 2 ? 'active' : welcomeStep > 2 ? 'done' : ''}">2. Lộ trình học</div>
+          <div class="wizard-step-pill ${welcomeStep === 3 ? 'active' : ''}">3. Chấm Writing AI</div>
+        </div>
+
+        ${
+          welcomeStep === 1
+            ? `
+          <div class="step-card">
+            <div class="step-head"><span>Bước 1 — Chọn phong cách bạn thích (bấm là đổi ngay)</span></div>
+            <div style="font-size:11.5px;color:var(--m-muted);margin-bottom:8px;">
+              Bạn có thể đổi lại bất cứ lúc nào ngay trên thanh trên cùng của ứng dụng.
+            </div>
+            ${renderThemeCards(curTheme, 'welcome-theme-card')}
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;">
+            <button class="btn btn-primary" id="welcomeNext1Btn" type="button">Tiếp tục →</button>
+          </div>`
+            : welcomeStep === 2
+            ? `
+          <div class="step-card">
+            <div class="step-head"><span>Bước 2 — Lộ trình học của riêng bạn</span></div>
+            <div style="font-size:11.5px;color:var(--m-muted);margin-bottom:10px;">
+              Ứng dụng đã có sẵn <b>Lộ trình mẫu 24 tuần (Band 6.5)</b>. Nếu muốn cá nhân hóa theo trình độ và ngày thi riêng, bạn có thể nhờ ChatGPT/Gemini tạo file <code>.md</code> và nạp vào app trong 1 phút.
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn btn-sm" id="welcomeCopyPromptBtn" type="button">📋 Copy câu lệnh gửi ChatGPT / Gemini</button>
+              <button class="btn btn-sm" id="welcomeOpenRoadmapBtn" type="button">📂 Mở trình nạp file .md</button>
+              <button class="btn btn-sm btn-primary" id="welcomeUseSampleBtn" type="button">✓ Dùng lộ trình mẫu 24 tuần</button>
+            </div>
+            ${welcomeMsg ? `<div class="status-msg ${welcomeOk === true ? 'ok' : welcomeOk === false ? 'err' : ''}">${esc(welcomeMsg)}</div>` : ''}
+          </div>
+          <div style="display:flex;justify-content:space-between;gap:8px;margin-top:12px;">
+            <button class="btn" id="welcomePrev2Btn" type="button">← Quay lại</button>
+            <button class="btn btn-primary" id="welcomeNext2Btn" type="button">Tiếp tục →</button>
+          </div>`
+            : `
+          <div class="step-card">
+            <div class="step-head"><span>Bước 3 — Chấm Writing bằng AI (tùy chọn)</span></div>
+            <div style="font-size:11.5px;color:var(--m-muted);margin-bottom:8px;">
+              Bạn có thể gắn <b>Google Gemini API Key miễn phí</b> để app tự chấm Writing 4 tiêu chí, hoặc bỏ qua bước này để học hoàn toàn miễn phí (vẫn có nút Copy Prompt gửi ChatGPT/Gemini web).
+            </div>
+            <div style="margin-bottom:8px;">
+              <button class="btn btn-sm" id="welcomeOpenAiStudioBtn" type="button">↗ Mở Google AI Studio lấy key miễn phí</button>
+            </div>
+            <div class="input-group">
+              <input type="password" id="welcomeKeyInput" placeholder="Dán Gemini API Key (AIza...) hoặc để trống nếu chưa dùng" value="${esc(welcomeKeyDraft)}" />
+              <button class="btn btn-sm" id="welcomeTestKeyBtn" type="button" ${isTestingApi ? 'disabled' : ''}>${isTestingApi ? 'Đang thử...' : 'Kiểm tra kết nối'}</button>
+            </div>
+            ${welcomeMsg ? `<div class="status-msg ${welcomeOk === true ? 'ok' : welcomeOk === false ? 'err' : ''}">${esc(welcomeMsg)}</div>` : ''}
+          </div>
+          <div style="display:flex;justify-content:space-between;gap:8px;margin-top:12px;flex-wrap:wrap;">
+            <button class="btn" id="welcomePrev3Btn" type="button">← Quay lại</button>
+            <button class="btn btn-primary" id="finishWelcomeBtn" type="button">🚀 Bắt đầu học ngay (miễn phí không cần API)</button>
+          </div>`
+        }
       </div>
     </div>
 
@@ -596,12 +756,14 @@ function bindEvents() {
 
   document.getElementById('pomoBtn')!.onclick = () => togglePomodoro(false);
 
-  document.getElementById('themeBtn')!.onclick = async () => {
-    if (!dash) return;
-    const next = dash.settings.theme === 'light' ? 'dark' : 'light';
-    dash.settings = await invoke('update_settings', { theme: next });
-    renderApp();
-  };
+  const themeSelect = document.getElementById('themeSelect') as HTMLSelectElement | null;
+  if (themeSelect) {
+    themeSelect.onchange = async () => {
+      if (!dash) return;
+      dash.settings = await invoke('update_settings', { theme: themeSelect.value });
+      renderApp();
+    };
+  }
 
   document.querySelectorAll<HTMLElement>('[data-quest-id]').forEach((el) => {
     el.onclick = async () => {
@@ -843,6 +1005,220 @@ function bindEvents() {
     document.getElementById('roadmapModal')!.classList.add('open');
   };
 
+  document.getElementById('reopenWelcomeBtn')!.onclick = () => {
+    settingsModal.classList.remove('open');
+    welcomeOpen = true;
+    welcomeStep = 1;
+    welcomeMsg = '';
+    welcomeOk = null;
+    renderApp();
+  };
+
+  document.querySelectorAll<HTMLButtonElement>('.settings-theme-card').forEach((btn) => {
+    btn.onclick = async () => {
+      if (!dash) return;
+      const picked = btn.dataset.pickTheme!;
+      dash.settings = await invoke('update_settings', { theme: picked });
+      renderApp();
+      document.getElementById('settingsModal')!.classList.add('open');
+    };
+  });
+
+  document.getElementById('exportBackupBtn')!.onclick = async () => {
+    try {
+      const res = await invoke<BackupResultDto>('export_db_backup');
+      backupMsg = res.message;
+      backupOk = res.cancelled ? null : true;
+    } catch (err) {
+      backupMsg = `✕ ${String(err)}`;
+      backupOk = false;
+    }
+    renderApp();
+    document.getElementById('settingsModal')!.classList.add('open');
+  };
+
+  document.getElementById('importBackupBtn')!.onclick = async () => {
+    try {
+      const res = await invoke<RestoreResultDto>('import_db_backup');
+      backupMsg = res.message;
+      backupOk = res.cancelled ? null : true;
+      if (res.dashboard) {
+        dash = res.dashboard;
+        dueCards = await invoke<VocabCard[]>('get_due_vocab');
+        cardIdx = 0;
+        cardFlipped = false;
+      }
+    } catch (err) {
+      backupMsg = `✕ ${String(err)}`;
+      backupOk = false;
+    }
+    renderApp();
+    document.getElementById('settingsModal')!.classList.add('open');
+  };
+
+  const widgetChk = document.getElementById('setWidgetEnabled') as HTMLInputElement | null;
+  if (widgetChk) {
+    widgetChk.onchange = async () => {
+      try {
+        widgetInfo = await invoke<WidgetRuntimeInfo>('set_widget_enabled', {
+          enabled: widgetChk.checked,
+        });
+        widgetStatusMsg = widgetInfo.running
+          ? '✓ Thanh Widget Taskbar đang bật và tự khởi động cùng Windows.'
+          : '✓ Đã tắt thanh Widget Taskbar.';
+      } catch (err) {
+        widgetStatusMsg = `✕ ${String(err)}`;
+        widgetChk.checked = !widgetChk.checked;
+      }
+      renderApp();
+      document.getElementById('settingsModal')!.classList.add('open');
+    };
+  }
+
+  // Welcome Wizard events
+  const finishOnboarding = async (extraKey?: string) => {
+    if (!dash) return;
+    dash.settings = await invoke('update_settings', {
+      geminiApiKey: extraKey && extraKey.trim() ? extraKey.trim() : null,
+      onboardingDone: true,
+    });
+    dash = await invoke<DashboardState>('get_dashboard');
+    welcomeOpen = false;
+    welcomeMsg = '';
+    welcomeOk = null;
+    renderApp();
+  };
+
+  const skipWelcomeBtn = document.getElementById('skipWelcomeBtn');
+  if (skipWelcomeBtn) {
+    skipWelcomeBtn.onclick = () => finishOnboarding();
+  }
+
+  document.querySelectorAll<HTMLButtonElement>('.welcome-theme-card').forEach((btn) => {
+    btn.onclick = async () => {
+      if (!dash) return;
+      const picked = btn.dataset.pickTheme!;
+      dash.settings = await invoke('update_settings', { theme: picked });
+      renderApp();
+    };
+  });
+
+  const welcomeNext1Btn = document.getElementById('welcomeNext1Btn');
+  if (welcomeNext1Btn) {
+    welcomeNext1Btn.onclick = () => {
+      welcomeStep = 2;
+      welcomeMsg = '';
+      welcomeOk = null;
+      renderApp();
+    };
+  }
+
+  const welcomePrev2Btn = document.getElementById('welcomePrev2Btn');
+  if (welcomePrev2Btn) {
+    welcomePrev2Btn.onclick = () => {
+      welcomeStep = 1;
+      welcomeMsg = '';
+      welcomeOk = null;
+      renderApp();
+    };
+  }
+
+  const welcomeNext2Btn = document.getElementById('welcomeNext2Btn');
+  if (welcomeNext2Btn) {
+    welcomeNext2Btn.onclick = () => {
+      welcomeStep = 3;
+      welcomeMsg = '';
+      welcomeOk = null;
+      renderApp();
+    };
+  }
+
+  const welcomeCopyPromptBtn = document.getElementById('welcomeCopyPromptBtn');
+  if (welcomeCopyPromptBtn) {
+    welcomeCopyPromptBtn.onclick = async () => {
+      const promptText = await invoke<string>('get_roadmap_prompt');
+      await navigator.clipboard.writeText(promptText);
+      welcomeMsg = '✓ Đã copy câu lệnh! Bạn có thể dán vào ChatGPT / Gemini để tạo lộ trình riêng.';
+      welcomeOk = true;
+      renderApp();
+    };
+  }
+
+  const welcomeOpenRoadmapBtn = document.getElementById('welcomeOpenRoadmapBtn');
+  if (welcomeOpenRoadmapBtn) {
+    welcomeOpenRoadmapBtn.onclick = () => {
+      welcomeOpen = false;
+      renderApp();
+      document.getElementById('roadmapModal')!.classList.add('open');
+    };
+  }
+
+  const welcomeUseSampleBtn = document.getElementById('welcomeUseSampleBtn');
+  if (welcomeUseSampleBtn) {
+    welcomeUseSampleBtn.onclick = () => {
+      welcomeMsg = '✓ Đang dùng sẵn Lộ trình mẫu 24 tuần (Band 6.5).';
+      welcomeOk = true;
+      welcomeStep = 3;
+      renderApp();
+    };
+  }
+
+  const welcomePrev3Btn = document.getElementById('welcomePrev3Btn');
+  if (welcomePrev3Btn) {
+    welcomePrev3Btn.onclick = () => {
+      welcomeStep = 2;
+      welcomeMsg = '';
+      welcomeOk = null;
+      renderApp();
+    };
+  }
+
+  const welcomeOpenAiStudioBtn = document.getElementById('welcomeOpenAiStudioBtn');
+  if (welcomeOpenAiStudioBtn) {
+    welcomeOpenAiStudioBtn.onclick = () => openUrl('https://aistudio.google.com/apikey');
+  }
+
+  const welcomeKeyInput = document.getElementById('welcomeKeyInput') as HTMLInputElement | null;
+  if (welcomeKeyInput) {
+    welcomeKeyInput.oninput = () => {
+      welcomeKeyDraft = welcomeKeyInput.value;
+    };
+  }
+
+  const welcomeTestKeyBtn = document.getElementById('welcomeTestKeyBtn');
+  if (welcomeTestKeyBtn) {
+    welcomeTestKeyBtn.onclick = async () => {
+      const typed = (document.getElementById('welcomeKeyInput') as HTMLInputElement)?.value.trim() || '';
+      welcomeKeyDraft = typed;
+      isTestingApi = true;
+      welcomeMsg = 'Đang kiểm tra kết nối tới Google Gemini API...';
+      welcomeOk = null;
+      renderApp();
+      try {
+        const res = await invoke<ApiTestResult>('test_gemini_connection', {
+          apiKey: typed || null,
+          model: dash?.settings.gemini_model || 'gemini-3-flash-preview',
+        });
+        welcomeMsg = res.message;
+        welcomeOk = res.ok;
+      } catch (err) {
+        welcomeMsg = `✕ ${String(err)}`;
+        welcomeOk = false;
+      } finally {
+        isTestingApi = false;
+        renderApp();
+      }
+    };
+  }
+
+  const finishWelcomeBtn = document.getElementById('finishWelcomeBtn');
+  if (finishWelcomeBtn) {
+    finishWelcomeBtn.onclick = () => {
+      const typed = (document.getElementById('welcomeKeyInput') as HTMLInputElement)?.value.trim() || welcomeKeyDraft;
+      finishOnboarding(typed);
+    };
+  }
+
   document.getElementById('saveSettingsBtn')!.onclick = async () => {
     const keyVal = (document.getElementById('setKey') as HTMLInputElement).value.trim();
     const modelVal = (document.getElementById('setModel') as HTMLSelectElement).value;
@@ -989,6 +1365,15 @@ document.addEventListener('keydown', (e) => {
 async function init() {
   dash = await invoke<DashboardState>('get_dashboard');
   dueCards = await invoke<VocabCard[]>('get_due_vocab');
+  try {
+    widgetInfo = await invoke<WidgetRuntimeInfo>('get_widget_runtime_info');
+  } catch {
+    widgetInfo = { running: false, autostart: false, exe_found: false };
+  }
+  if (dash && !dash.settings.onboarding_done) {
+    welcomeOpen = true;
+    welcomeStep = 1;
+  }
   renderApp();
 
   await listen('start-pomodoro-15', () => {
