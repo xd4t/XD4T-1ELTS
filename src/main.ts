@@ -2515,7 +2515,7 @@ function renderApp() {
         <div class="chart-zoom-body">
           ${
             customTask1ImageDataUrl
-              ? `<img src="${customTask1ImageDataUrl}" alt="Task 1 Chart" style="max-width:100%;max-height:72vh;display:block;margin:0 auto;" />`
+              ? `<img src="${esc(customTask1ImageDataUrl)}" alt="Task 1 Chart" style="max-width:100%;max-height:72vh;display:block;margin:0 auto;" />`
               : (() => {
                   const sp = parseChartSpec(curPrompt?.chart_spec_json);
                   return sp ? renderChartInnerHtml(sp) : '<div class="small muted">Chưa có biểu đồ.</div>';

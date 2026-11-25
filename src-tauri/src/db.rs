@@ -3532,8 +3532,8 @@ pub fn check_auto_refill_due(conn: &Connection, today: NaiveDate) -> Result<Auto
 
     let roadmap_done: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM roadmap_items WHERE track = ?1 AND done = 1",
-            params![level],
+            "SELECT COUNT(*) FROM roadmap_items WHERE track = 'ielts' AND done = 1",
+            [],
             |r| r.get(0),
         )
         .unwrap_or(0);
@@ -5419,9 +5419,19 @@ mod tests {
         let st_same_day = check_auto_refill_due(&conn, sunday).unwrap();
         assert!(!st_same_day.should_auto_refill);
 
+        let next_sunday = NaiveDate::from_ymd_opt(2026, 12, 6).unwrap();
+        // Ticking 2 roadmap weeks advances recommended_topic to Week 3's topic
+        conn.execute(
+            "UPDATE roadmap_items SET done = 1 WHERE id IN (SELECT id FROM roadmap_items WHERE track = 'ielts' ORDER BY id ASC LIMIT 2)",
+            [],
+        )
+        .unwrap();
+        let st_week3 = check_auto_refill_due(&conn, next_sunday).unwrap();
+        assert_eq!(st_week3.recommended_topic, IELTS_TOPICS[2]);
+        assert_ne!(st_week3.recommended_topic, st_sun.recommended_topic);
+
         // Toggle off -> disabled even 7 days later
         conn.execute("UPDATE settings SET auto_refill_enabled = 0 WHERE id = 1", []).unwrap();
-        let next_sunday = NaiveDate::from_ymd_opt(2026, 12, 6).unwrap();
         let st_disabled = check_auto_refill_due(&conn, next_sunday).unwrap();
         assert!(!st_disabled.enabled);
         assert!(!st_disabled.should_auto_refill);

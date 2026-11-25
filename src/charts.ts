@@ -84,8 +84,13 @@ export function parseChartSpec(raw: string | undefined | null): Task1ChartSpec |
   }
 }
 
+function safeNum(x: unknown): number {
+  const n = Number(x);
+  return Number.isFinite(n) ? n : 0;
+}
+
 function niceMax(values: number[]): number {
-  const maxVal = Math.max(1, ...values);
+  const maxVal = Math.max(1, ...values.map(safeNum));
   if (maxVal <= 10) return Math.ceil(maxVal);
   if (maxVal <= 100) return Math.ceil(maxVal / 10) * 10;
   const pow = Math.pow(10, Math.floor(Math.log10(maxVal)));
@@ -105,7 +110,7 @@ function renderLineSvg(spec: Omit<LineBarSpec, 'type'>, compact = false): string
   const padB = 34;
   const pw = w - padL - padR;
   const ph = h - padT - padB;
-  const allVals = series.flatMap((s) => s.values);
+  const allVals = series.flatMap((s) => (s.values || []).map(safeNum));
   const yMax = niceMax(allVals);
 
   let grid = '';
@@ -113,7 +118,7 @@ function renderLineSvg(spec: Omit<LineBarSpec, 'type'>, compact = false): string
     const y = padT + (ph * i) / 4;
     const val = Math.round(((4 - i) * yMax) / 4);
     grid += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${w - padR}" y2="${y.toFixed(1)}" stroke="currentColor" stroke-opacity="0.14" stroke-dasharray="3,3" />`;
-    grid += `<text x="${padL - 6}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="10" fill="currentColor" opacity="0.65">${val}</text>`;
+    grid += `<text x="${padL - 6}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="10" fill="currentColor" opacity="0.65">${escHtml(String(val))}</text>`;
   }
 
   const stepX = labels.length > 1 ? pw / (labels.length - 1) : 0;
@@ -128,7 +133,7 @@ function renderLineSvg(spec: Omit<LineBarSpec, 'type'>, compact = false): string
     const color = PALETTE[si % PALETTE.length];
     const pts = labels.map((_, i) => {
       const x = labels.length > 1 ? padL + i * stepX : padL + pw / 2;
-      const v = s.values[i] ?? 0;
+      const v = safeNum(s.values?.[i]);
       const y = padT + ph - (v / yMax) * ph;
       return { x, y, v };
     });
@@ -136,7 +141,7 @@ function renderLineSvg(spec: Omit<LineBarSpec, 'type'>, compact = false): string
     paths += `<path d="${d}" fill="none" stroke="${color}" stroke-width="2.4" stroke-linejoin="round" />`;
     pts.forEach((p) => {
       paths += `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3.4" fill="${color}" stroke="#fff" stroke-width="1" />`;
-      paths += `<text x="${p.x.toFixed(1)}" y="${(p.y - 6).toFixed(1)}" text-anchor="middle" font-size="9.5" font-weight="700" fill="${color}">${p.v}</text>`;
+      paths += `<text x="${p.x.toFixed(1)}" y="${(p.y - 6).toFixed(1)}" text-anchor="middle" font-size="9.5" font-weight="700" fill="${color}">${escHtml(String(p.v))}</text>`;
     });
   });
 
@@ -178,7 +183,7 @@ function renderBarSvg(spec: Omit<LineBarSpec, 'type'>, compact = false): string 
   const padB = 34;
   const pw = w - padL - padR;
   const ph = h - padT - padB;
-  const allVals = series.flatMap((s) => s.values);
+  const allVals = series.flatMap((s) => (s.values || []).map(safeNum));
   const yMax = niceMax(allVals);
 
   let grid = '';
@@ -186,7 +191,7 @@ function renderBarSvg(spec: Omit<LineBarSpec, 'type'>, compact = false): string 
     const y = padT + (ph * i) / 4;
     const val = Math.round(((4 - i) * yMax) / 4);
     grid += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${w - padR}" y2="${y.toFixed(1)}" stroke="currentColor" stroke-opacity="0.14" stroke-dasharray="3,3" />`;
-    grid += `<text x="${padL - 6}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="10" fill="currentColor" opacity="0.65">${val}</text>`;
+    grid += `<text x="${padL - 6}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="10" fill="currentColor" opacity="0.65">${escHtml(String(val))}</text>`;
   }
 
   const groupW = pw / labels.length;
@@ -197,13 +202,13 @@ function renderBarSvg(spec: Omit<LineBarSpec, 'type'>, compact = false): string 
   labels.forEach((lb, gi) => {
     const gx = padL + gi * groupW + (groupW - barGroupW) / 2;
     series.forEach((s, si) => {
-      const val = s.values[gi] ?? 0;
+      const val = safeNum(s.values?.[gi]);
       const bh = (val / yMax) * ph;
       const bx = gx + si * (barW + 3);
       const by = padT + ph - bh;
       const color = PALETTE[si % PALETTE.length];
       bars += `<rect x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" rx="2" fill="${color}" />`;
-      bars += `<text x="${(bx + barW / 2).toFixed(1)}" y="${(by - 4).toFixed(1)}" text-anchor="middle" font-size="9" font-weight="700" fill="currentColor">${val}</text>`;
+      bars += `<text x="${(bx + barW / 2).toFixed(1)}" y="${(by - 4).toFixed(1)}" text-anchor="middle" font-size="9" font-weight="700" fill="currentColor">${escHtml(String(val))}</text>`;
     });
     bars += `<text x="${(padL + (gi + 0.5) * groupW).toFixed(1)}" y="${h - 10}" text-anchor="middle" font-size="10.5" fill="currentColor" opacity="0.82">${escHtml(lb)}</text>`;
   });
@@ -242,7 +247,7 @@ function renderPieSvg(spec: PieSpec): string {
 
   const piesHtml = panels
     .map((panel) => {
-      const total = panel.slices.reduce((a, b) => a + b.value, 0) || 100;
+      const total = panel.slices.reduce((a, b) => a + safeNum(b.value), 0) || 100;
       const cx = 75;
       const cy = 75;
       const r = 62;
@@ -252,7 +257,8 @@ function renderPieSvg(spec: PieSpec): string {
       panel.slices.forEach((slice) => {
         const idx = categoryNames.indexOf(slice.name);
         const color = PALETTE[(idx >= 0 ? idx : 0) % PALETTE.length];
-        const frac = slice.value / total;
+        const sv = safeNum(slice.value);
+        const frac = sv / total;
         const endAngle = startAngle + frac * Math.PI * 2;
         const x1 = cx + r * Math.cos(startAngle);
         const y1 = cy + r * Math.sin(startAngle);
@@ -265,7 +271,7 @@ function renderPieSvg(spec: PieSpec): string {
           const mid = (startAngle + endAngle) / 2;
           const lx = cx + r * 0.65 * Math.cos(mid);
           const ly = cy + r * 0.65 * Math.sin(mid) + 3;
-          arcs += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" font-size="10" font-weight="700" fill="#fff">${slice.value}%</text>`;
+          arcs += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" font-size="10" font-weight="700" fill="#fff">${escHtml(String(sv))}%</text>`;
         }
         startAngle = endAngle;
       });
@@ -427,7 +433,7 @@ export function renderTask1VisualHtml(
             <button type="button" class="btn btn-sm" id="clearCustomTask1ImgBtn">✕ Xóa ảnh ngoài</button>
           </div>
         </div>
-        <img src="${customImageDataUrl}" alt="Custom Task 1 Chart" class="task1-custom-img" />
+        <img src="${escHtml(customImageDataUrl)}" alt="Custom Task 1 Chart" class="task1-custom-img" />
       </div>
     `;
   }
