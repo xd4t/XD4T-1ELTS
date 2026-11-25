@@ -867,6 +867,178 @@ textarea.editor:focus {
   border-color: var(--m-ok);
 }
 
+/* Welcome Finish (Step 4) + Donate Card */
+.welcome-finish-grid {
+  display: grid;
+  grid-template-columns: 1.38fr 1fr;
+  gap: 18px;
+  align-items: stretch;
+  margin-top: 4px;
+}
+.welcome-finish-main {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+}
+.welcome-finish-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--m-fg);
+  line-height: 1.35;
+}
+.welcome-finish-desc {
+  font-size: 12px;
+  color: var(--m-muted);
+  line-height: 1.5;
+}
+.welcome-summary-box {
+  background: var(--m-bg);
+  border: 1px solid var(--m-line);
+  border-radius: var(--m-radius-sm);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.welcome-summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  font-size: 11.5px;
+}
+.welcome-summary-row span {
+  color: var(--m-muted);
+}
+.welcome-summary-row b {
+  color: var(--m-fg);
+  text-align: right;
+}
+.welcome-start-btn {
+  width: 100%;
+  padding: 11px 16px;
+  font-size: 13.5px;
+  font-weight: 800;
+  margin-top: 2px;
+}
+.welcome-finish-note {
+  font-size: 10.5px;
+  color: var(--m-muted);
+  text-align: center;
+}
+.welcome-finish-donate {
+  border-left: 1px dashed var(--m-line-strong);
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 8px;
+}
+.donate-badge {
+  display: inline-block;
+  padding: 3px 9px;
+  font-size: 10.5px;
+  font-weight: 700;
+  background: var(--m-accent-soft);
+  color: var(--m-fg);
+  border: 1px solid var(--m-line);
+  border-radius: var(--m-radius-sm);
+}
+.donate-qr-frame {
+  width: 150px;
+  background: #ffffff !important;
+  padding: 8px;
+  border: 1px solid var(--m-line-strong);
+  border-radius: var(--m-radius-sm);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+.donate-qr-frame.donate-qr-frame-sm {
+  width: 112px;
+  padding: 6px;
+  flex-shrink: 0;
+}
+.donate-qr-frame img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.donate-caption {
+  font-size: 11px;
+  color: var(--m-muted);
+  line-height: 1.45;
+  max-width: 220px;
+}
+.donate-bank-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.donate-bank-row code {
+  font-size: 11px;
+  padding: 3px 7px;
+  background: var(--m-bg);
+  border: 1px solid var(--m-line);
+  border-radius: var(--m-radius-sm);
+  color: var(--m-fg);
+}
+
+/* Settings Collapsible Donate */
+.donate-details {
+  margin-top: 14px;
+  border: 1px solid var(--m-line);
+  border-radius: var(--m-radius-sm);
+  background: var(--m-bg);
+  padding: 8px 12px;
+}
+.donate-details summary {
+  cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--m-muted);
+  user-select: none;
+}
+.donate-details[open] summary {
+  color: var(--m-fg);
+  margin-bottom: 10px;
+}
+.donate-details-body {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.donate-details-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.donate-details-thanks {
+  font-size: 11.5px;
+  color: var(--m-muted);
+  line-height: 1.45;
+}
+
+@media (max-width: 680px) {
+  .welcome-finish-grid {
+    grid-template-columns: 1fr;
+  }
+  .welcome-finish-donate {
+    border-left: none;
+    border-top: 1px dashed var(--m-line-strong);
+    padding-left: 0;
+    padding-top: 14px;
+  }
+  .donate-details-body {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
 .data-actions-row {
   display: flex;
   gap: 8px;

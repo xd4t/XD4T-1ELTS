@@ -2,13 +2,13 @@
 
 Ứng dụng tự học **IELTS Band 6.5+** gọn nhẹ cho Windows 10/11 — mỗi ngày chỉ cần **30 phút**, lưu toàn bộ bài học ngay trên máy bạn. Có **4 màu giao diện dịu mắt** (**Pastel Nam**, **Pastel Nữ**, **Mono Đen**, **Mono Trắng**), **AI chấm bài viết** và **thanh nhắc nhỏ dưới góc màn hình**.
 
-> **[⬇️ Tải ngay bộ cài 1-file: XD4T-1ELTS-v1.2.0-Setup.exe](https://github.com/xd4t/XD4T-1ELTS/releases/latest/download/XD4T-1ELTS-v1.2.0-Setup.exe)** *(Windows 10/11 · Miễn phí · Bấm là cài, không cần cài thêm gì)*
+> **[⬇️ Tải ngay bộ cài 1-file: XD4T-1ELTS-v1.2.1-Setup.exe](https://github.com/xd4t/XD4T-1ELTS/releases/latest/download/XD4T-1ELTS-v1.2.1-Setup.exe)** *(Windows 10/11 · Miễn phí · Bấm là cài, không cần cài thêm gì)*
 
 ---
 
 ## Cài đặt trong 30 giây (3 bước)
 
-1. **Tải file** **`XD4T-1ELTS-v1.2.0-Setup.exe`** ở nút phía trên.
+1. **Tải file** **`XD4T-1ELTS-v1.2.1-Setup.exe`** ở nút phía trên.
 2. **Mở file vừa tải** → bấm **Next → Install → Finish** *(nếu Windows hiện bảng xanh "Windows protected your PC", chỉ cần bấm **More info** → **Run anyway**)*.
 3. **Mở app** từ màn hình chính, chọn màu giao diện bạn thích rồi **bắt đầu học ngay**.
 

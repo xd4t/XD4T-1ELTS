@@ -2,6 +2,7 @@ import './styles.css';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import donateQrUrl from './assets/donate-qr.png';
 import type {
   ApiTestResult,
   BackupResultDto,
@@ -533,6 +534,22 @@ function renderApp() {
             <button class="btn btn-primary" id="saveSettingsBtn">LƯU CÀI ĐẶT</button>
           </div>
         </div>
+
+        <details class="donate-details" id="settingsDonateDetails">
+          <summary>☕ Thích app này? Ủng hộ tác giả (VietQR)</summary>
+          <div class="donate-details-body">
+            <div class="donate-qr-frame donate-qr-frame-sm">
+              <img src="${donateQrUrl}" alt="VietQR MB Bank 9888888881808" />
+            </div>
+            <div class="donate-details-info">
+              <div class="donate-details-thanks">Cảm ơn bạn đã đồng hành cùng XD4T IELTS! App hoàn toàn miễn phí &amp; không quảng cáo.</div>
+              <div class="donate-bank-row">
+                <code>MB Bank · 9888888881808 · PHAM XUAN DAT</code>
+                <button class="btn btn-sm" id="settingsCopyStkBtn" type="button">Copy STK</button>
+              </div>
+            </div>
+          </div>
+        </details>
       </div>
     </div>
 
@@ -540,14 +557,14 @@ function renderApp() {
     <div class="modal-backdrop ${welcomeOpen ? 'open' : ''}" id="welcomeModal">
       <div class="modal-box modal-wide">
         <div class="box-title">
-          <span>CHÀO MỪNG TỚI XD4T IELTS · THIẾT LẬP NHANH (${welcomeStep}/3)</span>
+          <span>${welcomeStep === 4 ? 'CHÀO MỪNG TỚI XD4T IELTS · HOÀN TẤT THIẾT LẬP' : `CHÀO MỪNG TỚI XD4T IELTS · THIẾT LẬP NHANH (${welcomeStep}/3)`}</span>
           <button class="btn btn-sm" id="skipWelcomeBtn" type="button">Bỏ qua</button>
         </div>
 
         <div class="wizard-steps">
           <div class="wizard-step-pill ${welcomeStep === 1 ? 'active' : welcomeStep > 1 ? 'done' : ''}">1. Chọn phong cách</div>
           <div class="wizard-step-pill ${welcomeStep === 2 ? 'active' : welcomeStep > 2 ? 'done' : ''}">2. Lộ trình học</div>
-          <div class="wizard-step-pill ${welcomeStep === 3 ? 'active' : ''}">3. Chấm Writing AI</div>
+          <div class="wizard-step-pill ${welcomeStep === 3 ? 'active' : welcomeStep > 3 ? 'done' : ''}">3. Chấm Writing AI</div>
         </div>
 
         ${
@@ -581,7 +598,8 @@ function renderApp() {
             <button class="btn" id="welcomePrev2Btn" type="button">← Quay lại</button>
             <button class="btn btn-primary" id="welcomeNext2Btn" type="button">Tiếp tục →</button>
           </div>`
-            : `
+            : welcomeStep === 3
+            ? `
           <div class="step-card">
             <div class="step-head"><span>Bước 3 — Chấm Writing bằng AI (tùy chọn)</span></div>
             <div style="font-size:11.5px;color:var(--m-muted);margin-bottom:8px;">
@@ -598,7 +616,46 @@ function renderApp() {
           </div>
           <div style="display:flex;justify-content:space-between;gap:8px;margin-top:12px;flex-wrap:wrap;">
             <button class="btn" id="welcomePrev3Btn" type="button">← Quay lại</button>
-            <button class="btn btn-primary" id="finishWelcomeBtn" type="button">🚀 Bắt đầu học ngay (miễn phí không cần API)</button>
+            <button class="btn btn-primary" id="welcomeNext3Btn" type="button">Hoàn tất thiết lập →</button>
+          </div>`
+            : `
+          <div class="welcome-finish-grid">
+            <div class="welcome-finish-main">
+              <div class="welcome-finish-title">🎉 Xong rồi! Sẵn sàng chinh phục Band 6.5+</div>
+              <div class="welcome-finish-desc">
+                Mọi thứ đã sẵn sàng trên máy bạn. Từ giờ mỗi ngày chỉ cần 30 phút đều đặn nhé.
+              </div>
+              <div class="welcome-summary-box">
+                <div class="welcome-summary-row">
+                  <span>Giao diện đang chọn</span>
+                  <b>${esc(THEME_OPTIONS.find((t) => t.id === curTheme)?.label || curTheme)}</b>
+                </div>
+                <div class="welcome-summary-row">
+                  <span>Lộ trình hiện tại</span>
+                  <b>${dash.roadmap.length} tuần · Mục tiêu Band ${dash.settings.target_band.toFixed(1)}</b>
+                </div>
+                <div class="welcome-summary-row">
+                  <span>Chấm Writing AI</span>
+                  <b>${dash.settings.has_api_key || welcomeKeyDraft.trim() ? '✓ Đã gắn Gemini API Key' : 'Chưa gắn key (dùng Prompt miễn phí)'}</b>
+                </div>
+              </div>
+              <button class="btn btn-primary welcome-start-btn" id="finishWelcomeBtn" type="button">Bắt đầu học ngay →</button>
+              <div class="welcome-finish-note">Màn hình này chỉ hiện 1 lần duy nhất sau khi thiết lập.</div>
+            </div>
+
+            <div class="welcome-finish-donate">
+              <div class="donate-badge">☕ Tùy chọn · Mời cà phê tác giả</div>
+              <div class="donate-qr-frame">
+                <img src="${donateQrUrl}" alt="VietQR MB Bank 9888888881808" />
+              </div>
+              <div class="donate-caption">
+                App hoàn toàn miễn phí &amp; không quảng cáo. Nếu thấy hữu ích, mời tác giả ly cà phê nhé!
+              </div>
+              <div class="donate-bank-row">
+                <code>MB · 9888888881808</code>
+                <button class="btn btn-sm" id="welcomeCopyStkBtn" type="button">Copy</button>
+              </div>
+            </div>
           </div>`
         }
       </div>
@@ -1211,13 +1268,39 @@ function bindEvents() {
     };
   }
 
+  const welcomeNext3Btn = document.getElementById('welcomeNext3Btn');
+  if (welcomeNext3Btn) {
+    welcomeNext3Btn.onclick = () => {
+      const typed = (document.getElementById('welcomeKeyInput') as HTMLInputElement)?.value.trim() || '';
+      if (typed) welcomeKeyDraft = typed;
+      welcomeStep = 4;
+      welcomeMsg = '';
+      welcomeOk = null;
+      renderApp();
+    };
+  }
+
   const finishWelcomeBtn = document.getElementById('finishWelcomeBtn');
   if (finishWelcomeBtn) {
     finishWelcomeBtn.onclick = () => {
-      const typed = (document.getElementById('welcomeKeyInput') as HTMLInputElement)?.value.trim() || welcomeKeyDraft;
-      finishOnboarding(typed);
+      finishOnboarding(welcomeKeyDraft);
     };
   }
+
+  const bindCopyStk = (btnId: string) => {
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    btn.onclick = async () => {
+      await navigator.clipboard.writeText('9888888881808');
+      const prev = btn.textContent || 'Copy';
+      btn.textContent = 'Đã copy!';
+      window.setTimeout(() => {
+        btn.textContent = prev;
+      }, 2000);
+    };
+  };
+  bindCopyStk('welcomeCopyStkBtn');
+  bindCopyStk('settingsCopyStkBtn');
 
   document.getElementById('saveSettingsBtn')!.onclick = async () => {
     const keyVal = (document.getElementById('setKey') as HTMLInputElement).value.trim();
