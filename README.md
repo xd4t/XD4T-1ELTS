@@ -1,92 +1,78 @@
 # XD4T IELTS 6.5 (`XD4T-1ELTS`)
 
-Ứng dụng học **IELTS Band 6.5+** siêu nhẹ cho Windows 10/11 — mỗi ngày chỉ **30 phút**, lưu tiến độ hoàn toàn trên máy bạn, có **4 giao diện dịu mắt** (**Pastel Nam**, **Pastel Nữ**, **Mono Đen**, **Mono Trắng**), **chấm Writing bằng AI** và **thanh Widget nhỏ trên Taskbar Windows**.
+Ứng dụng tự học **IELTS Band 6.5+** gọn nhẹ cho Windows 10/11 — mỗi ngày chỉ cần **30 phút**, lưu toàn bộ bài học ngay trên máy bạn. Có **4 màu giao diện dịu mắt** (**Pastel Nam**, **Pastel Nữ**, **Mono Đen**, **Mono Trắng**), **AI chấm bài viết** và **thanh nhắc nhỏ dưới góc màn hình**.
 
-> **[⬇️ Tải ngay bộ cài 1-file: XD4T-1ELTS-v1.2.0-Setup.exe](../../releases/latest/download/XD4T-1ELTS-v1.2.0-Setup.exe)** *(Windows 10/11 · Hoàn toàn miễn phí · Không cần cài thêm phần mềm khác)*
-
----
-
-## Cài đặt chỉ trong 30 giây (3 bước)
-
-1. **Bấm tải** file **`XD4T-1ELTS-v1.2.0-Setup.exe`** ở nút phía trên.
-2. **Bấm đúp** để mở file vừa tải → bấm **Next → Install → Finish** *(không cần quyền Admin)*.
-   > **Lưu ý thân thiện:** Vì đây là phần mềm mã nguồn mở miễn phí (chưa mua chứng chỉ ký số thương mại), nếu Windows hiện màn hình xanh **"Windows protected your PC"**, bạn chỉ cần bấm **More info** (Thông tin thêm) → **Run anyway** (Vẫn chạy) là cài bình thường.
-3. **Mở ứng dụng** từ Desktop hoặc Start Menu → chọn màu **Pastel Nam / Pastel Nữ / Mono** trong màn hình Chào mừng → **bắt đầu học ngay!**
+> **[⬇️ Tải ngay bộ cài 1-file: XD4T-1ELTS-v1.2.0-Setup.exe](https://github.com/xd4t/XD4T-1ELTS/releases/latest/download/XD4T-1ELTS-v1.2.0-Setup.exe)** *(Windows 10/11 · Miễn phí · Bấm là cài, không cần cài thêm gì)*
 
 ---
 
-## Giao diện 3 phong cách (Pastel Nam · Pastel Nữ · XD4T Mono)
+## Cài đặt trong 30 giây (3 bước)
 
-### Màn hình Chào mừng & Dashboard Pastel Nam (Mặc định · Sky & Mint)
-| Thiết lập nhanh 3 bước cho người mới | Dashboard Hôm Nay (Pastel Nam) |
+1. **Tải file** **`XD4T-1ELTS-v1.2.0-Setup.exe`** ở nút phía trên.
+2. **Mở file vừa tải** → bấm **Next → Install → Finish** *(nếu Windows hiện bảng xanh "Windows protected your PC", chỉ cần bấm **More info** → **Run anyway**)*.
+3. **Mở app** từ màn hình chính, chọn màu giao diện bạn thích rồi **bắt đầu học ngay**.
+
+---
+
+## Xem trước giao diện
+
+| Màn hình Chào mừng (chọn màu & lộ trình) | Trang học hôm nay — Pastel Nam (xanh dịu) |
 |---|---|
-| ![Welcome Wizard Pastel Male](docs/screenshots/01-welcome-pastel-male.png) | ![Dashboard Pastel Male](docs/screenshots/02-dashboard-pastel-male.png) |
+| ![Màn hình Chào mừng](docs/screenshots/01-welcome-pastel-male.png) | ![Trang học Pastel Nam](docs/screenshots/02-dashboard-pastel-male.png) |
 
-### Pastel Nữ (Sakura & Peach) — Dịu dàng, ấm áp
-| Dashboard Hôm Nay (Pastel Nữ) | Phòng luyện Writing + Chấm AI (Pastel Nữ) |
+| Trang học hôm nay — Pastel Nữ (hồng đào) | Phòng luyện viết & AI chấm bài — Pastel Nữ |
 |---|---|
-| ![Dashboard Pastel Female](docs/screenshots/03-dashboard-pastel-female.png) | ![Writing AI Pastel Female](docs/screenshots/04-writing-pastel-female.png) |
+| ![Trang học Pastel Nữ](docs/screenshots/03-dashboard-pastel-female.png) | ![Phòng luyện viết Pastel Nữ](docs/screenshots/04-writing-pastel-female.png) |
 
-### Cài đặt, Sao lưu 1-Click & Thanh Widget Taskbar đồng bộ màu
-| Cài đặt & Sao lưu / Khôi phục ngay trong App | Widget Taskbar Windows đồng bộ màu Pastel |
+| Cài đặt & nút Lưu / Khôi phục bài học | Thanh nhắc nhỏ dưới góc màn hình |
 |---|---|
-| ![Settings & Backup](docs/screenshots/05-settings-backup-pastel-male.png) | ![Taskbar Widget Pastel](docs/screenshots/06-taskbar-pastel.png) |
-
-*(Bạn vẫn có thể chuyển sang **XD4T Mono Đen / Trắng** góc vuông bất cứ lúc nào ngay trên thanh trên cùng của ứng dụng.)*
+| ![Cài đặt và Sao lưu](docs/screenshots/05-settings-backup-pastel-male.png) | ![Thanh nhắc Taskbar](docs/screenshots/06-taskbar-pastel.png) |
 
 ---
 
-## Tính năng chính dành cho người tự học
+## App giúp bạn học gì mỗi ngày?
 
-- **Học gọn 30 phút mỗi ngày:** 3 nhiệm vụ rõ ràng, đếm ngược Pomodoro 15 phút, Heatmap chuỗi ngày học để không bị đứt nhịp.
-- **Chấm Writing 4 tiêu chí (`TA / CC / LR / GRA`):** Hỗ trợ gợi ý khung bài Band 6.5, checklist soát lỗi 3 phút, sửa lỗi trực tiếp và bài mẫu nâng Band.
-- **Từ vựng SRS thông minh (Offline):** 40+ collocation Band 6.5 tự động lặp lại ngắt quãng (`Quên / Khó / Nhớ / Dễ`).
-- **Lộ trình 24 tuần & Sổ lỗi:** Theo dõi tiến độ từng tuần, lưu điểm đề thi thử và gom các lỗi hay mắc.
-- **Widget Taskbar Windows 11:** Thanh nhỏ gọn hiển thị số nhiệm vụ xong hôm nay, chuỗi ngày học và Band hiện tại ngay cạnh nút Thời tiết (có thể bật/tắt bằng 1 cú click trong **Cài đặt**).
-
----
-
-## Cá nhân hóa lộ trình với ChatGPT / Gemini
-
-App đã có sẵn **Lộ trình mẫu 24 tuần (Band 6.5)** dùng được ngay. Nếu muốn lộ trình riêng theo điểm đầu vào và ngày thi của bạn:
-
-1. Mở tab **`[4] LỘ TRÌNH & SỔ LỖI`** → bấm **`+ NẠP LỘ TRÌNH .MD`** (hoặc bấm ngay ở **Bước 2** trong màn hình Chào mừng).
-2. Bấm **`COPY PROMPT TẠO LỘ TRÌNH CHO AI`** và dán vào **ChatGPT / Gemini / Claude**. AI sẽ hỏi 5 câu ngắn rồi tạo sẵn file `lo-trinh.md` cho bạn.
-3. Bấm **`CHỌN FILE .MD TỪ MÁY`** (hoặc dán nội dung vào khung) → **`PHÂN TÍCH & XEM TRƯỚC`** → **`ÁP DỤNG LỘ TRÌNH NGAY`**.
+- **Học gọn 30 phút mỗi ngày:** Chia sẵn 3 việc cần làm, có **đồng hồ tập trung 15 phút** và **lịch theo dõi chuỗi ngày học** để bạn không bỏ dở.
+- **Luyện viết có AI chấm bài:** Gợi ý dàn ý Band 6.5, nhắc soát lỗi nhanh 3 phút, sửa lỗi trực tiếp và gợi ý bài mẫu hay hơn.
+- **Ôn từ vựng tự động nhớ lâu:** Hơn 40 cụm từ hay dùng cho Band 6.5, tự động nhắc ôn lại đúng lúc bạn sắp quên.
+- **Lộ trình học riêng & Sổ lỗi:** Theo dõi tiến độ từng tuần, lưu điểm thi thử và gom các lỗi hay mắc để tránh lặp lại.
+- **Thanh nhắc nhỏ dưới góc màn hình:** Hiện số bài đã xong hôm nay, chuỗi ngày học và mức điểm hiện tại ngay cạnh đồng hồ Windows.
 
 ---
 
-## Lấy Gemini API Key miễn phí (để AI tự chấm bài)
+## 3 việc hay dùng nhất
 
-1. Mở **`CÀI ĐẶT`** → bấm **`↗ LẤY KEY MIỄN PHÍ TẠI GOOGLE AI STUDIO`**.
-2. Đăng nhập Google → bấm **Create API key** → copy chuỗi key (`AIza...`).
-3. Dán vào ô **Gemini API Key** trong app → bấm **`KIỂM TRA KẾT NỐI API`** → **`LƯU CÀI ĐẶT`**.
-   *(Không muốn tạo key? Bạn vẫn dùng nút **`COPY PROMPT CHẤM AI`** ở tab Writing để dán sang ChatGPT/Gemini web hoàn toàn miễn phí!)*
+### 1. Đổi sang lộ trình học riêng bằng ChatGPT / Gemini
+1. Mở mục **Lộ trình & Sổ lỗi** → bấm **Nạp lộ trình**.
+2. Bấm **Copy mẫu hỏi AI**, dán vào **ChatGPT** hoặc **Gemini** để AI tạo lộ trình riêng theo ngày thi của bạn.
+3. Chọn file lộ trình vừa tạo (hoặc dán thẳng vào khung) → bấm **Áp dụng lộ trình ngay**.
+
+### 2. Bật AI tự chấm bài viết miễn phí
+1. Mở **Cài đặt** → bấm **Lấy key miễn phí tại Google AI Studio**.
+2. Đăng nhập Google → bấm **Create API key** → copy dòng mã vừa tạo.
+3. Dán vào ô **Gemini API Key** trong app → bấm **Kiểm tra** → **Lưu**.
+   *(Không muốn tạo key? Bạn vẫn có thể bấm nút **Copy sang ChatGPT / Gemini web** ở phòng luyện viết để chấm miễn phí!)*
+
+### 3. Lưu bài học trước khi đổi máy / cài lại Windows
+1. Mở **Cài đặt** → bấm **Xuất file sao lưu** để lưu toàn bộ bài học thành 1 file cất vào USB hoặc Google Drive.
+2. Sang máy mới, cài app xong chỉ cần vào **Cài đặt** → bấm **Khôi phục** và chọn lại file đó.
+3. Toàn bộ tiến độ, từ vựng, điểm thi và sổ lỗi sẽ còn nguyên như cũ.
 
 ---
 
-## Sao lưu dữ liệu trước khi đổi máy / cài lại Windows
+## Hỏi đáp nhanh
 
-Bạn **không cần gõ bất kỳ câu lệnh nào**:
-- Mở **`CÀI ĐẶT`** → mục **Dữ liệu học tập & Widget Taskbar**:
-  - Bấm **`💾 Xuất file sao lưu (.db)`** để lưu toàn bộ tiến độ, từ vựng SRS, điểm thi và sổ lỗi thành 1 file `.db` cất vào USB / Google Drive.
-  - Khi sang máy mới hoặc cài lại Windows, cài xong app chỉ cần bấm **`📂 Khôi phục từ file (.db)`** và chọn lại file đó là nguyên vẹn 100%!
-
----
-
-## Hỏi đáp nhanh (FAQ)
-
-- **App có cần mạng Internet để học không?**
-  Không! Từ vựng SRS, lộ trình, nhiệm vụ hàng ngày, Pomodoro và sổ lỗi đều chạy 100% offline trên máy bạn. Chỉ cần mạng khi bấm **Chấm Writing bằng Gemini AI**.
-- **Gỡ cài đặt có làm mất tiến độ đang học không?**
-  Không. Bộ gỡ cài đặt chuẩn trong *Windows Settings → Apps* sẽ giữ lại dữ liệu học của bạn ở `%APPDATA%\xd4t-ielts65\ielts65.db` để khi cài lại không bị mất bài.
-- **Widget Taskbar có đè lên nút Thời tiết hay làm chậm máy không?**
-  Widget tự động dò vị trí nút Thời tiết của Windows 11 để né sang bên cạnh, tiêu tốn chưa tới 10 MB RAM. Nếu không thích, bạn có thể tắt ngay bằng công tắc trong **Cài đặt**.
+- **Có cần mạng Internet để học không?**
+  Không. Mọi bài học, từ vựng, đồng hồ tập trung và sổ lỗi đều chạy không cần mạng; chỉ cần mạng khi bạn bấm nút nhờ AI chấm bài viết.
+- **Gỡ app ra có mất bài đang học không?**
+  Không. Khi bạn gỡ app theo cách thông thường của Windows, dữ liệu học vẫn được giữ lại an toàn trên máy để lần sau cài lại vẫn còn nguyên.
+- **Tắt thanh nhắc dưới góc màn hình ở đâu?**
+  Vào **Cài đặt** trong app và gạt tắt mục **Thanh nhắc Taskbar** là xong ngay.
 
 ---
 
 <details>
-<summary><b>Dành cho lập trình viên: Tự build từ mã nguồn, kiến trúc & script PowerShell</b></summary>
+<summary><b>Dành cho lập trình viên: Tự build từ mã nguồn, kiến trúc & script hỗ trợ</b></summary>
 
 ### Kiến trúc kỹ thuật
 - **Desktop App:** Rust + Tauri v2 + TypeScript + Vite + SQLite (`rusqlite` bundled, WAL mode).
