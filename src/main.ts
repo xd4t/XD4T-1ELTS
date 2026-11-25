@@ -76,6 +76,8 @@ let hintOpen = false;
 let lastGrade: GradeResult | null = null;
 let lastEndpoint = '';
 let isGrading = false;
+let writingStatusMsg = '';
+let writingStatusErr = false;
 let dueCards: VocabCard[] = [];
 let cardIdx = 0;
 let cardFlipped = false;
@@ -193,12 +195,16 @@ function renderApp() {
               </div>`
             : ''
         }
+        <div class="band-section-head">
+          <span>TIẾN ĐỘ 4 KỸ NĂNG (MỤC TIÊU ${dash.settings.target_band.toFixed(1)} · BẤM THẺ ĐỂ NHẬP ĐIỂM)</span>
+          <button class="btn btn-sm btn-primary" id="openScoreTab1Btn" type="button">+ Nhập điểm</button>
+        </div>
         <div class="grid-4" style="margin-bottom:12px;">
           ${dash.skill_bands
             .map((b) => {
               const fill = Math.min(100, Math.max(10, Math.round((b.current / 9.0) * 100)));
               return `
-              <div class="band-card">
+              <div class="band-card" data-band-skill="${esc(b.skill)}" tabindex="0" role="button" title="Bấm để nhập điểm ${esc(b.skill)}">
                 <div class="band-name">${esc(b.skill)}${b.skill === 'Writing' ? ' ★' : ''}</div>
                 <div class="band-val">${b.current.toFixed(1)} <small>→ ${b.target.toFixed(1)}</small></div>
                 <div class="bar-track"><div class="bar-fill" style="width:${fill}%"></div></div>
@@ -217,7 +223,7 @@ function renderApp() {
             ${dash.quests
               .map(
                 (q) => `
-              <div class="quest ${q.done ? 'done' : ''}" data-quest-id="${q.id}">
+              <div class="quest ${q.done ? 'done' : ''}" data-quest-id="${q.id}" tabindex="0" role="button">
                 <div class="q-check">${q.done ? '✓' : ''}</div>
                 <div>
                   <div class="q-title">${esc(q.title)}</div>
@@ -287,7 +293,7 @@ function renderApp() {
             <div class="prompt-box"><b>Đề:</b> ${esc(curPrompt?.prompt || '')}</div>
             <div class="hint-box ${hintOpen ? 'open' : ''}" id="hintBox">${esc(curPrompt?.outline_hint || '')}</div>
             <textarea class="editor" id="essayInput" placeholder="Nhập bài viết tiếng Anh của bạn tại đây..."></textarea>
-            <div style="border:1px solid var(--m-line);background:var(--m-bg);padding:8px;margin-top:8px;font-size:11px;">
+            <div class="checklist-3m">
               <div style="font-weight:700;color:var(--m-muted);margin-bottom:5px;text-transform:uppercase;">CHECKLIST SOÁT LỖI 3 PHÚT TRƯỚC KHI NỘP:</div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;">
                 ${dash.settings.writing_checklist
@@ -302,7 +308,7 @@ function renderApp() {
               <button class="btn btn-sm" id="copyPromptBtn">COPY PROMPT CHẤM AI</button>
               <button class="btn btn-primary" id="gradeBtn" ${isGrading ? 'disabled' : ''}>${isGrading ? 'ĐANG CHẤM AI...' : 'CHẤM BAND 6.5 NGAY →'}</button>
             </div>
-            <div id="writingStatus" style="font-size:11px;color:var(--m-muted);margin-top:6px;"></div>
+            <div id="writingStatus" class="status-msg ${writingStatusErr ? 'err' : writingStatusMsg ? 'ok' : ''}" style="margin-top:6px;">${esc(writingStatusMsg)}</div>
           </div>
 
           <div class="box" id="gradePanel">
@@ -357,7 +363,7 @@ function renderApp() {
           ${
             curCard
               ? `
-            <div class="fc-stage" id="fcStage">
+            <div class="fc-stage" id="fcStage" tabindex="0" role="button">
               <span class="fc-topic">${esc(curCard.topic.toUpperCase())} · BAND 6.5 · REPS ${curCard.reps}</span>
               <div class="fc-word">${esc(curCard.word)}</div>
               ${!cardFlipped ? `<div style="font-size:11px;color:var(--m-muted);">(Bấm vào thẻ để xem nghĩa & ví dụ)</div>` : ''}
@@ -403,7 +409,7 @@ function renderApp() {
               ${dash.roadmap
                 .map(
                   (r) => `
-                <div class="rm-item ${r.done ? 'done' : ''}" data-rm-id="${r.id}">
+                <div class="rm-item ${r.done ? 'done' : ''}" data-rm-id="${r.id}" tabindex="0" role="button">
                   <div class="rm-check">${r.done ? '✓' : ''}</div>
                   <b class="rm-week">${esc(r.week_label)}:</b>
                   <span class="rm-title">${esc(r.title)}</span>
@@ -481,15 +487,15 @@ function renderApp() {
           ${widgetStatusMsg ? `<div class="status-msg">${esc(widgetStatusMsg)}</div>` : ''}
         </div>
 
-        <div class="guide-box">
-          <b>Hướng dẫn lấy Gemini API Key miễn phí (3 bước):</b><br/>
+        <details class="guide-box guide-details">
+          <summary>❓ Hướng dẫn lấy Gemini API Key miễn phí (3 bước)</summary>
           1. Bấm nút bên dưới để mở Google AI Studio và đăng nhập Google.<br/>
           2. Chọn <b>Create API key</b> → copy chuỗi bắt đầu bằng <code>AIza...</code>.<br/>
           3. Dán vào ô bên dưới hoặc nạp từ file <code>.txt/.env</code>, rồi bấm <b>Kiểm tra kết nối API</b>.
           <div style="margin-top:6px;">
-            <button class="btn btn-sm" id="openAiStudioBtn">↗ LẤY KEY MIỄN PHÍ TẠI GOOGLE AI STUDIO</button>
+            <button class="btn btn-sm" id="openAiStudioBtn" type="button">↗ LẤY KEY MIỄN PHÍ TẠI GOOGLE AI STUDIO</button>
           </div>
-        </div>
+        </details>
         <div class="form-row">
           <label>Gemini API Key ${dash.settings.has_api_key ? `(Đang lưu: ${esc(dash.settings.api_key_masked)})` : '(Chưa có)'}</label>
           <div class="input-group">
@@ -524,17 +530,6 @@ function renderApp() {
           <input type="checkbox" id="setAutostart" style="width:auto;" ${dash.settings.autostart ? 'checked' : ''} />
           <label for="setAutostart" style="margin:0;cursor:pointer;">Tự khởi động cùng Windows</label>
         </div>
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-top:14px;flex-wrap:wrap;">
-          <div style="display:flex;gap:6px;flex-wrap:wrap;">
-            <button class="btn btn-sm" id="settingsToRoadmapBtn" type="button">+ NẠP LỘ TRÌNH .MD</button>
-            <button class="btn btn-sm" id="reopenWelcomeBtn" type="button">Mở lại hướng dẫn bắt đầu</button>
-          </div>
-          <div style="display:flex;gap:6px;">
-            <button class="btn" id="cancelSettingsBtn">HỦY</button>
-            <button class="btn btn-primary" id="saveSettingsBtn">LƯU CÀI ĐẶT</button>
-          </div>
-        </div>
-
         <details class="donate-details" id="settingsDonateDetails">
           <summary>☕ Thích app này? Ủng hộ tác giả (VietQR)</summary>
           <div class="donate-details-body">
@@ -550,6 +545,17 @@ function renderApp() {
             </div>
           </div>
         </details>
+
+        <div class="modal-sticky-footer">
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button class="btn btn-sm" id="settingsToRoadmapBtn" type="button">+ NẠP LỘ TRÌNH .MD</button>
+            <button class="btn btn-sm" id="reopenWelcomeBtn" type="button">Mở lại hướng dẫn bắt đầu</button>
+          </div>
+          <div style="display:flex;gap:6px;">
+            <button class="btn" id="cancelSettingsBtn">HỦY</button>
+            <button class="btn btn-primary" id="saveSettingsBtn">LƯU CÀI ĐẶT</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -803,6 +809,19 @@ function togglePomodoro(forceStart = false) {
   }, 1000);
 }
 
+async function finishOnboarding(extraKey?: string) {
+  if (!dash) return;
+  dash.settings = await invoke('update_settings', {
+    geminiApiKey: extraKey && extraKey.trim() ? extraKey.trim() : null,
+    onboardingDone: true,
+  });
+  dash = await invoke<DashboardState>('get_dashboard');
+  welcomeOpen = false;
+  welcomeMsg = '';
+  welcomeOk = null;
+  renderApp();
+}
+
 function bindEvents() {
   document.querySelectorAll<HTMLButtonElement>('.nav-tab').forEach((btn) => {
     btn.onclick = () => {
@@ -822,12 +841,22 @@ function bindEvents() {
     };
   }
 
+  const bindActivate = (el: HTMLElement, handler: () => void | Promise<void>) => {
+    el.onclick = () => { void handler(); };
+    el.onkeydown = (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        void handler();
+      }
+    };
+  };
+
   document.querySelectorAll<HTMLElement>('[data-quest-id]').forEach((el) => {
-    el.onclick = async () => {
+    bindActivate(el, async () => {
       const id = Number(el.dataset.questId);
       dash = await invoke<DashboardState>('toggle_quest', { id });
       renderApp();
-    };
+    });
   });
 
   // Writing tab
@@ -881,8 +910,13 @@ function bindEvents() {
         .join('\n');
       const rubric = `Hãy đóng vai Giám khảo IELTS Writing chấm bài dưới đây theo 4 tiêu chí (TA, CC, LR, GRA) và trả kết quả rõ ràng bằng tiếng Việt + bản viết lại Band 6.5.\n\n[ĐIỂM YẾU CẦN SOI KỸ]:\n${focusNotes}\n\n[CHẾ ĐỘ]: ${writingMode}\n[ĐỀ BÀI]: ${p?.prompt || ''}\n\n[BÀI VIẾT]:\n${content}`;
       await navigator.clipboard.writeText(rubric);
+      writingStatusMsg = '✓ Đã copy prompt + bài viết vào Clipboard! Dán vào ChatGPT/Gemini web để chấm miễn phí.';
+      writingStatusErr = false;
       const st = document.getElementById('writingStatus');
-      if (st) st.textContent = '✓ Đã copy prompt + bài viết vào Clipboard! Dán vào ChatGPT/Gemini web để chấm miễn phí.';
+      if (st) {
+        st.textContent = writingStatusMsg;
+        st.className = 'status-msg ok';
+      }
     };
   }
 
@@ -891,11 +925,18 @@ function bindEvents() {
     gradeBtn.onclick = async () => {
       const content = (document.getElementById('essayInput') as HTMLTextAreaElement)?.value.trim() || '';
       if (content.length < 20) {
+        writingStatusMsg = 'Hãy viết ít nhất vài câu trước khi chấm.';
+        writingStatusErr = true;
         const st = document.getElementById('writingStatus');
-        if (st) st.textContent = 'Hãy viết ít nhất vài câu trước khi chấm.';
+        if (st) {
+          st.textContent = writingStatusMsg;
+          st.className = 'status-msg err';
+        }
         return;
       }
       isGrading = true;
+      writingStatusMsg = '';
+      writingStatusErr = false;
       renderApp();
       // Preserve textarea content across re-render
       const restored = document.getElementById('essayInput') as HTMLTextAreaElement | null;
@@ -911,8 +952,8 @@ function bindEvents() {
         lastEndpoint = res.endpoint;
         dash = await invoke<DashboardState>('get_dashboard');
       } catch (err) {
-        const st = document.getElementById('writingStatus');
-        if (st) st.textContent = `Lỗi: ${String(err)}`;
+        writingStatusMsg = `Lỗi: ${String(err)}`;
+        writingStatusErr = true;
       } finally {
         isGrading = false;
         renderApp();
@@ -936,10 +977,10 @@ function bindEvents() {
   // Vocab SRS
   const fcStage = document.getElementById('fcStage');
   if (fcStage) {
-    fcStage.onclick = () => {
+    bindActivate(fcStage, () => {
       cardFlipped = !cardFlipped;
       renderApp();
-    };
+    });
   }
 
   document.querySelectorAll<HTMLButtonElement>('.srs-btn').forEach((btn) => {
@@ -962,11 +1003,11 @@ function bindEvents() {
 
   // Roadmap & Error Log
   document.querySelectorAll<HTMLElement>('[data-rm-id]').forEach((el) => {
-    el.onclick = async () => {
+    bindActivate(el, async () => {
       const id = Number(el.dataset.rmId);
       dash = await invoke<DashboardState>('toggle_roadmap_item', { id });
       renderApp();
-    };
+    });
   });
 
   document.getElementById('openStudy4Btn')!.onclick = () => openUrl('https://study4.com/tests/ielts/');
@@ -1133,19 +1174,6 @@ function bindEvents() {
   }
 
   // Welcome Wizard events
-  const finishOnboarding = async (extraKey?: string) => {
-    if (!dash) return;
-    dash.settings = await invoke('update_settings', {
-      geminiApiKey: extraKey && extraKey.trim() ? extraKey.trim() : null,
-      onboardingDone: true,
-    });
-    dash = await invoke<DashboardState>('get_dashboard');
-    welcomeOpen = false;
-    welcomeMsg = '';
-    welcomeOk = null;
-    renderApp();
-  };
-
   const skipWelcomeBtn = document.getElementById('skipWelcomeBtn');
   if (skipWelcomeBtn) {
     skipWelcomeBtn.onclick = () => finishOnboarding();
@@ -1422,7 +1450,19 @@ function bindEvents() {
   };
 
   const scoreModal = document.getElementById('scoreModal')!;
-  document.getElementById('openScoreModalBtn')!.onclick = () => scoreModal.classList.add('open');
+  const openScoreForSkill = (skill?: string) => {
+    if (skill) {
+      const sel = document.getElementById('scSkill') as HTMLSelectElement | null;
+      if (sel) sel.value = skill;
+    }
+    scoreModal.classList.add('open');
+  };
+  document.getElementById('openScoreModalBtn')!.onclick = () => openScoreForSkill();
+  const openScoreTab1Btn = document.getElementById('openScoreTab1Btn');
+  if (openScoreTab1Btn) openScoreTab1Btn.onclick = () => openScoreForSkill();
+  document.querySelectorAll<HTMLElement>('[data-band-skill]').forEach((el) => {
+    bindActivate(el, () => openScoreForSkill(el.dataset.bandSkill));
+  });
   document.getElementById('closeScoreBtn')!.onclick = () => scoreModal.classList.remove('open');
   document.getElementById('cancelScoreBtn')!.onclick = () => scoreModal.classList.remove('open');
   scoreModal.onclick = (e) => {
@@ -1441,6 +1481,11 @@ function bindEvents() {
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
+    const welcomeEl = document.getElementById('welcomeModal');
+    if (welcomeEl?.classList.contains('open')) {
+      welcomeOpen = false;
+      void finishOnboarding();
+    }
     document.querySelectorAll('.modal-backdrop.open').forEach((m) => m.classList.remove('open'));
   }
 });

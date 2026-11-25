@@ -31,7 +31,7 @@ namespace XD4TIeltsBar
 
     internal sealed class IeltsWidgetForm : Form
     {
-        private const int BaseWidth = 196;
+        private const int BaseWidth = 180;
         private const int BaseHeight = 38;
 
         private const int WS_EX_TOOLWINDOW = 0x00000080;
@@ -44,7 +44,9 @@ namespace XD4TIeltsBar
         private const uint SWP_SHOWWINDOW = 0x0040;
         private const uint GW_HWNDPREV = 3;
         private const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+        private const int DWMWCP_DONOTROUND = 1;
         private const int DWMWCP_ROUNDSMALL = 3;
+        private bool? _lastAppliedMono = null;
 
         private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
         private static readonly int WM_TASKBARCREATED = RegisterWindowMessageW("TaskbarCreated");
@@ -215,7 +217,11 @@ namespace XD4TIeltsBar
         {
             try
             {
-                int pref = DWMWCP_ROUNDSMALL;
+                string theme = (_data.Theme ?? "pastel-male").Trim().ToLowerInvariant();
+                bool isMono = theme != "pastel-male" && theme != "pastel-female";
+                if (_lastAppliedMono.HasValue && _lastAppliedMono.Value == isMono) return;
+                _lastAppliedMono = isMono;
+                int pref = isMono ? DWMWCP_DONOTROUND : DWMWCP_ROUNDSMALL;
                 DwmSetWindowAttribute(Handle, DWMWA_WINDOW_CORNER_PREFERENCE, ref pref, Marshal.SizeOf(typeof(int)));
             }
             catch { }
@@ -590,6 +596,8 @@ namespace XD4TIeltsBar
             string theme = (_data.Theme ?? "pastel-male").Trim().ToLowerInvariant();
             bool isPastelMale = theme == "pastel-male";
             bool isPastelFemale = theme == "pastel-female";
+            bool isMono = !isPastelMale && !isPastelFemale;
+            ApplyRoundedCorners();
 
             Color bg;
             Color border;
@@ -607,12 +615,12 @@ namespace XD4TIeltsBar
                 bg = _hovered ? ColorTranslator.FromHtml("#E8F2F0") : ColorTranslator.FromHtml("#F2F7F6");
                 border = ColorTranslator.FromHtml("#C8DDD9");
                 fg = ColorTranslator.FromHtml("#1E2F36");
-                badgeBg = ColorTranslator.FromHtml("#3B82A0");
+                badgeBg = ColorTranslator.FromHtml("#2F6E89");
                 badgeFg = ColorTranslator.FromHtml("#FFFFFF");
                 track = ColorTranslator.FromHtml("#DCE8E6");
                 okGreen = ColorTranslator.FromHtml("#1E7E5C");
                 alertRed = ColorTranslator.FromHtml("#C2414B");
-                progressStart = ColorTranslator.FromHtml("#3B82A0");
+                progressStart = ColorTranslator.FromHtml("#2F6E89");
                 progressEnd = ColorTranslator.FromHtml("#52A68C");
             }
             else if (isPastelFemale)
@@ -620,34 +628,39 @@ namespace XD4TIeltsBar
                 bg = _hovered ? ColorTranslator.FromHtml("#FBECEB") : ColorTranslator.FromHtml("#FDF6F5");
                 border = ColorTranslator.FromHtml("#EED2D4");
                 fg = ColorTranslator.FromHtml("#3A272B");
-                badgeBg = ColorTranslator.FromHtml("#D67A89");
+                badgeBg = ColorTranslator.FromHtml("#B54E61");
                 badgeFg = ColorTranslator.FromHtml("#FFFFFF");
                 track = ColorTranslator.FromHtml("#F4E1E2");
                 okGreen = ColorTranslator.FromHtml("#2D7A54");
-                alertRed = ColorTranslator.FromHtml("#C94452");
-                progressStart = ColorTranslator.FromHtml("#D67A89");
+                alertRed = ColorTranslator.FromHtml("#B93846");
+                progressStart = ColorTranslator.FromHtml("#B54E61");
                 progressEnd = ColorTranslator.FromHtml("#E59876");
             }
             else
             {
-                bg = _isDark
+                bool useDark = theme == "mono-dark" ? true : (theme == "mono-light" ? false : _isDark);
+                bg = useDark
                     ? (_hovered ? ColorTranslator.FromHtml("#1F1F25") : ColorTranslator.FromHtml("#0C0C0E"))
                     : (_hovered ? ColorTranslator.FromHtml("#E7E7EE") : ColorTranslator.FromHtml("#FFFFFF"));
-                border = _isDark ? ColorTranslator.FromHtml("#242429") : ColorTranslator.FromHtml("#DCDCE2");
-                fg = _isDark ? ColorTranslator.FromHtml("#F2F2F5") : ColorTranslator.FromHtml("#0C0C0E");
-                badgeBg = _isDark ? ColorTranslator.FromHtml("#F2F2F5") : ColorTranslator.FromHtml("#18181C");
-                badgeFg = _isDark ? ColorTranslator.FromHtml("#0C0C0E") : ColorTranslator.FromHtml("#FFFFFF");
-                track = _isDark ? ColorTranslator.FromHtml("#222228") : ColorTranslator.FromHtml("#E3E3EA");
-                okGreen = _isDark ? ColorTranslator.FromHtml("#22C55E") : ColorTranslator.FromHtml("#15803D");
-                alertRed = _isDark ? ColorTranslator.FromHtml("#EF4444") : ColorTranslator.FromHtml("#D70015");
+                border = useDark ? ColorTranslator.FromHtml("#242429") : ColorTranslator.FromHtml("#DCDCE2");
+                fg = useDark ? ColorTranslator.FromHtml("#F2F2F5") : ColorTranslator.FromHtml("#0C0C0E");
+                badgeBg = useDark ? ColorTranslator.FromHtml("#F2F2F5") : ColorTranslator.FromHtml("#18181C");
+                badgeFg = useDark ? ColorTranslator.FromHtml("#0C0C0E") : ColorTranslator.FromHtml("#FFFFFF");
+                track = useDark ? ColorTranslator.FromHtml("#222228") : ColorTranslator.FromHtml("#E3E3EA");
+                okGreen = useDark ? ColorTranslator.FromHtml("#22C55E") : ColorTranslator.FromHtml("#15803D");
+                alertRed = useDark ? ColorTranslator.FromHtml("#EF4444") : ColorTranslator.FromHtml("#D70015");
                 progressStart = badgeBg;
                 progressEnd = badgeBg;
             }
 
             g.Clear(bg);
 
+            float outerR = isMono ? 0f : Sf(6f);
+            float badgeR = isMono ? 0f : Sf(4f);
+            float barR = isMono ? 0f : Sf(1.5f);
+
             RectangleF outer = new RectangleF(0.5f, 0.5f, Width - 1f, Height - 1f);
-            using (GraphicsPath p = CreateRoundedRect(outer, Sf(6f)))
+            using (GraphicsPath p = CreateRoundedRect(outer, outerR))
             using (SolidBrush br = new SolidBrush(bg))
             using (Pen pen = new Pen(border, 1f))
             {
@@ -656,11 +669,11 @@ namespace XD4TIeltsBar
             }
 
             float padX = Sf(8f);
-            float badgeW = Sf(46f);
+            float badgeW = Sf(44f);
             float badgeH = Sf(18f);
             float badgeY = Sf(6f);
             RectangleF badgeRect = new RectangleF(padX, badgeY, badgeW, badgeH);
-            using (GraphicsPath bp = CreateRoundedRect(badgeRect, Sf(4f)))
+            using (GraphicsPath bp = CreateRoundedRect(badgeRect, badgeR))
             using (SolidBrush bbr = new SolidBrush(badgeBg))
             {
                 g.FillPath(bbr, bp);
@@ -693,7 +706,7 @@ namespace XD4TIeltsBar
             float barY = Height - Sf(6.5f);
             float barW = Width - padX * 2f;
             RectangleF trackRect = new RectangleF(padX, barY, barW, barH);
-            using (GraphicsPath tp = CreateRoundedRect(trackRect, Sf(1.5f)))
+            using (GraphicsPath tp = CreateRoundedRect(trackRect, barR))
             using (SolidBrush tbr = new SolidBrush(track))
             {
                 g.FillPath(tbr, tp);
@@ -704,7 +717,7 @@ namespace XD4TIeltsBar
             {
                 float fillW = Math.Max(Sf(4f), (float)(barW * ratio));
                 RectangleF fillRect = new RectangleF(padX, barY, fillW, barH);
-                using (GraphicsPath fp = CreateRoundedRect(fillRect, Sf(1.5f)))
+                using (GraphicsPath fp = CreateRoundedRect(fillRect, barR))
                 {
                     if (allDone)
                     {

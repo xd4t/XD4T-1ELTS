@@ -2,7 +2,7 @@
 
 [← Quay lại trang giới thiệu chính](../README.md)
 
-Chào bạn! Nếu bạn mới bắt đầu tự học IELTS hoặc không rành công nghệ, hướng dẫn này sẽ chỉ bạn từng bước thật chậm, rõ ràng và đúng theo từng nút bấm trong app **XD4T IELTS 6.5 (v1.2.1)**.
+Chào bạn! Nếu bạn mới bắt đầu tự học IELTS hoặc không rành công nghệ, hướng dẫn này sẽ chỉ bạn từng bước thật chậm, rõ ràng và đúng theo từng nút bấm trong app **XD4T IELTS 6.5 (v1.2.2)**.
 
 ---
 
@@ -83,9 +83,9 @@ Nếu bạn làm **Full Test (40 câu)** hoặc chỉ làm **1 Passage / 1 Secti
 | 13 – 14 câu đúng | 33+ câu đúng | **7.5+** |
 
 ### 3.4. Quay lại XD4T IELTS để nhập điểm
-1. Mở app **XD4T IELTS**, bấm sang tab **`[4] LỘ TRÌNH & SỔ LỖI`**.
-2. Ở cuối khung lộ trình bên trái, bạn có thể bấm **`↗ MỞ STUDY4`** (hoặc **`↗ MỞ IELTS ONLINE TESTS`**) để mở nhanh web luyện đề bất cứ lúc nào.
-3. Khi đã có điểm, bấm nút **`+ NHẬP ĐIỂM ĐỀ VỪA LÀM`**.
+1. Mở app **XD4T IELTS** — bạn có thể bấm nút **`+ Nhập điểm`** (hoặc bấm thẳng vào 1 trong 4 thẻ Band **Listening / Reading / Speaking / Writing**) ngay trên tab **`[1] HÔM NAY`**, hoặc bấm sang tab **`[4] LỘ TRÌNH & SỔ LỖI`**.
+2. Ở cuối khung lộ trình bên trái (tab 4), bạn có thể bấm **`↗ MỞ STUDY4`** (hoặc **`↗ MỞ IELTS ONLINE TESTS`**) để mở nhanh web luyện đề bất cứ lúc nào.
+3. Khi đã có điểm, bấm nút **`+ NHẬP ĐIỂM ĐỀ VỪA LÀM`** (hoặc **`+ Nhập điểm`** ở tab 1).
 4. Trong cửa sổ **`NHẬP ĐIỂM ĐỀ VỪA LÀM`** vừa hiện ra, điền 4 ô:
    - **Kỹ năng:** chọn `Listening`, `Reading`, `Writing`, hoặc `Speaking`.
    - **Nguồn đề (VD: Study4 Cam 15 Test 1):** gõ tên đề bạn vừa làm (mặc định đang điền sẵn `Study4 Cambridge`).
