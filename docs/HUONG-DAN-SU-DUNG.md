@@ -2,7 +2,7 @@
 
 [← Quay lại trang giới thiệu chính](../README.md)
 
-Chào bạn! Nếu bạn mới bắt đầu tự học IELTS hoặc không rành công nghệ, hướng dẫn này sẽ chỉ bạn từng bước thật chậm, rõ ràng và đúng theo từng nút bấm trong app **XD4T IELTS (v1.5.0)**.
+Chào bạn! Nếu bạn mới bắt đầu tự học IELTS hoặc không rành công nghệ, hướng dẫn này sẽ chỉ bạn từng bước thật chậm, rõ ràng và đúng theo từng nút bấm trong app **XD4T IELTS (v1.6.0)**.
 
 ---
 
@@ -133,17 +133,19 @@ Tab **`[3] TỪ VỰNG SRS`** giúp bạn học từ vựng **hoàn toàn offlin
 
 ![Học từ vựng SRS](screenshots/03-vocab-srs-dark.png)
 
-### 5.1. Quiz kiểm tra từ vựng định kỳ & tự đẩy từ quên về SRS (v1.5.0)
-- Vào **Thứ 5** và **Chủ Nhật** hằng tuần (hoặc khi quá **3 ngày** chưa kiểm tra), app tự động nhắc ở tab **`[1] HÔM NAY`** và thêm nhiệm vụ Quiz vào lịch học.
-- Trong tab **`[3] TỪ VỰNG SRS`**, chuyển sang mục **`📝 QUIZ KIỂM TRA TRÍ NHỚ`** để làm bài kiểm tra **100% offline** với 3 chế độ:
-  - **`⚡ Hỗn hợp (Khuyên dùng)`**: 7 câu trắc nghiệm (chọn nghĩa + điền ngữ cảnh) và 3 câu gõ từ cuối bài.
-  - **`🔘 Trắc nghiệm 4 đáp án`**: chọn nhanh 1 trong 4 cụm từ phù hợp.
-  - **`⌨️ Gõ từ Active Recall`**: nhìn nghĩa tiếng Việt & gợi ý chữ cái đầu để gõ lại cụm từ chính xác.
-- Bất kỳ từ nào bạn **chọn sai** hoặc bấm **`❓ Quên từ này`** sẽ tự động được reset về đầu hàng đợi SRS hôm nay. Ở màn tổng kết, bấm **`↺ ÔN LẠI NGAY X TỪ VỪA QUÊN →`** để lật lại ngay các thẻ vừa quên.
+### 5.1. Chữa 🔥 Từ cứng đầu (Leech), Quiz Sửa Lỗi, Micro-Check 2p & Nghe chép câu (v1.6.0)
+- **Flashcard 3 mặt thẻ & Chữa từ cứng đầu:** Chọn **`Mặt từ`**, **`Câu đục lỗ`**, hoặc **`🎧 Nghe trước`** (ẩn chữ tới khi lật). Khi một từ bị quên ≥ 3 lần, thẻ hiện badge **`🔥 Từ cứng đầu`** cùng nút **`✍️ Chữa từ này`** để bạn tự đặt 1 câu mới với từ đó và lưu thành thẻ Cloze mới. Dùng nút **`+ Thêm từ`** để nạp từ mới từ Study4 (**Sentence Mining**), hoặc đổi giọng **`en-GB` / `en-US`** trong **`CÀI ĐẶT`**.
+- **Quiz & Sửa lỗi:** Gồm 3 pill: **`📝 Quiz Từ vựng`**, **`🔧 Quiz Gõ Sửa Lỗi`** (gõ lại cụm sửa chuẩn từ Sổ lỗi, so khớp linh hoạt), và **`⚡ Micro-Check 5 câu (2p)`** (trộn 2 từ dễ quên + 2 câu Sổ lỗi + 1 cặp Paraphrase).
+- **🎧 Nghe chép câu (Dictation 100% offline):** Chọn tốc độ **`0.85x | 1.0x | 1.15x`**, nghe bằng phím **`Ctrl + Space`**, gõ lại nguyên câu rồi bấm **`Kiểm tra (Enter)`** để xem từng từ đúng/sai (xanh/đỏ) và bấm **`+ Đẩy vào Sổ lỗi Listening`**.
+
+### 5.2. Phòng Luyện Nói (Speaking Studio — 48 Cue Card 24 tuần)
+- Mở từ **`Quick Actions → 🎙️ Phòng Luyện Nói`** hoặc nhiệm vụ Core trên Tab 1.
+- Hỗ trợ 2 chế độ: **`🎯 Thi thật (Part 2 + Part 3)`** và **`⚡ Phản xạ 4-3-2`**.
+- Nếu có Gemini API Key, bấm **`✨ Chấm AI (Gemini Audio)`** để nhận Transcript, 4 Band `FC/LR/GRA/P*`, WPM, số từ đệm và tự đẩy 3 lỗi sang Sổ lỗi (`Speaking`). Nếu chưa có key, dùng **`⬇ Tải file ghi âm`**, **`📋 Copy Prompt + Rubric`**, hoặc **`✓ Tự chấm 5 mục`**.
 
 ---
 
-## Phần 6: Theo dõi lộ trình 24 tuần, nạp lộ trình riêng & ghi Sổ lỗi ở tab `[4] LỘ TRÌNH & SỔ LỖI`
+## Phần 6: Theo dõi lộ trình 24 tuần, nạp lộ trình riêng, Sổ lỗi & Bảng Paraphrase ở tab `[4] LỘ TRÌNH & SỔ LỖI`
 
 ### 6.1. Theo dõi & nạp lộ trình cá nhân (`.md`)
 - Khung bên trái hiển thị tiến độ từng giai đoạn và danh sách từng tuần. Học xong tuần nào, bạn bấm vào tuần đó để tick `✓`.

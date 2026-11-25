@@ -19,8 +19,10 @@ use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_notification::NotificationExt;
 
 use crate::models::{
-    Correction, DashboardState, GradeResult, QuizAnswerInput, QuizQuestion, QuizSubmitResult,
-    SettingsPublic, VocabCard,
+    Correction, DashboardState, DictationResultInput, DictationSentence, DictationSubmitResult,
+    ErrorFixQuestion, GradeResult, MicroCheckAnswerInput, MicroCheckItem, MicroCheckSubmitResult,
+    ParaphrasePair, QuizAnswerInput, QuizQuestion, QuizSubmitResult, SettingsPublic, SpeakingCue,
+    SpeakingErrorItem, SpeakingGradeResponse, SpeakingSession, VocabCard,
 };
 
 pub struct AppState {
@@ -61,10 +63,13 @@ fn add_pomodoro_minutes(
 }
 
 #[tauri::command]
-fn get_due_vocab(state: State<'_, AppState>) -> Result<Vec<VocabCard>, String> {
+fn get_due_vocab(
+    state: State<'_, AppState>,
+    only_leech: Option<bool>,
+) -> Result<Vec<VocabCard>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
-    db::get_due_vocab(&conn, &today)
+    db::get_due_vocab(&conn, &today, only_leech)
 }
 
 #[tauri::command]
@@ -78,6 +83,50 @@ fn review_vocab(
     let res = db::review_vocab_card(&conn, card_id, quality, today)?;
     let _ = db::write_widget_status(&conn);
     Ok(res)
+}
+
+#[tauri::command]
+fn add_vocab_card(
+    state: State<'_, AppState>,
+    word: String,
+    meaning: String,
+    example: String,
+    topic: String,
+) -> Result<VocabCard, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
+    let card = db::add_vocab_card(&conn, &word, &meaning, &example, &topic, &today)?;
+    let _ = db::write_widget_status(&conn);
+    Ok(card)
+}
+
+#[tauri::command]
+fn cure_leech_card(
+    state: State<'_, AppState>,
+    card_id: i64,
+    user_sentence: String,
+) -> Result<VocabCard, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
+    db::cure_leech_card(&conn, card_id, &user_sentence, &today)
+}
+
+#[tauri::command]
+fn toggle_hide_vocab_card(
+    state: State<'_, AppState>,
+    card_id: i64,
+    hidden: bool,
+) -> Result<DashboardState, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::toggle_hide_vocab_card(&conn, card_id, hidden)?;
+    db::get_dashboard_state(&conn)
+}
+
+#[tauri::command]
+fn delete_vocab_card(state: State<'_, AppState>, card_id: i64) -> Result<DashboardState, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::delete_vocab_card(&conn, card_id)?;
+    db::get_dashboard_state(&conn)
 }
 
 #[tauri::command]
@@ -104,16 +153,258 @@ fn submit_vocab_quiz(
 }
 
 #[tauri::command]
+fn generate_error_fix_quiz(
+    state: State<'_, AppState>,
+    count: Option<i64>,
+) -> Result<Vec<ErrorFixQuestion>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::generate_error_fix_quiz(&conn, count)
+}
+
+#[tauri::command]
+fn generate_micro_check(state: State<'_, AppState>) -> Result<Vec<MicroCheckItem>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::generate_micro_check(&conn)
+}
+
+#[tauri::command]
+fn submit_micro_check(
+    state: State<'_, AppState>,
+    results: Vec<MicroCheckAnswerInput>,
+) -> Result<MicroCheckSubmitResult, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let today = Local::now().date_naive();
+    let res = db::submit_micro_check(&conn, results, today)?;
+    let _ = db::write_widget_status(&conn);
+    Ok(res)
+}
+
+#[tauri::command]
+fn get_dictation_batch(
+    state: State<'_, AppState>,
+    count: Option<i64>,
+) -> Result<Vec<DictationSentence>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::get_dictation_batch(&conn, count)
+}
+
+#[tauri::command]
+fn submit_dictation_session(
+    state: State<'_, AppState>,
+    results: Vec<DictationResultInput>,
+) -> Result<DictationSubmitResult, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let today = Local::now().date_naive();
+    let res = db::submit_dictation_session(&conn, results, today)?;
+    let _ = db::write_widget_status(&conn);
+    Ok(res)
+}
+
+#[tauri::command]
+fn list_paraphrases(state: State<'_, AppState>) -> Result<Vec<ParaphrasePair>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::list_paraphrases(&conn)
+}
+
+#[tauri::command]
+fn add_paraphrase(
+    state: State<'_, AppState>,
+    question_term: String,
+    passage_paraphrase: String,
+    source_type: String,
+    trap_note: String,
+) -> Result<DashboardState, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::add_paraphrase(&conn, &question_term, &passage_paraphrase, &source_type, &trap_note)?;
+    db::get_dashboard_state(&conn)
+}
+
+#[tauri::command]
+fn delete_paraphrase(state: State<'_, AppState>, id: i64) -> Result<DashboardState, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::delete_paraphrase(&conn, id)?;
+    db::get_dashboard_state(&conn)
+}
+
+#[tauri::command]
+fn get_speaking_cue(
+    state: State<'_, AppState>,
+    week_num: Option<i64>,
+    random_next: Option<bool>,
+    exclude_id: Option<i64>,
+) -> Result<SpeakingCue, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::get_speaking_cue(&conn, week_num, random_next, exclude_id)
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn grade_speaking_audio(
+    state: State<'_, AppState>,
+    cue_id: Option<i64>,
+    cue_title: String,
+    part3_questions: Vec<String>,
+    mode: String,
+    track: String,
+    audio_b64_list: Vec<String>,
+    mime_type: String,
+) -> Result<SpeakingGradeResponse, String> {
+    let (api_key, model) = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        let s = db::get_settings_raw(&conn)?;
+        (s.gemini_api_key, s.gemini_model)
+    };
+
+    let (payload, endpoint) = ai::grade_speaking_audio_with_gemini(
+        &api_key,
+        &model,
+        &cue_title,
+        &part3_questions,
+        &mode,
+        &track,
+        &audio_b64_list,
+        &mime_type,
+    )
+    .await?;
+
+    let feedback_json = serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string());
+    let today = Local::now().date_naive();
+
+    let (session, marked_quest_done) = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        for err in payload.top_errors.iter().take(3) {
+            if !err.wrong.trim().is_empty() && !err.fix.trim().is_empty() {
+                let cat = if err.category.trim().is_empty() {
+                    "Speaking".to_string()
+                } else if err.category.to_lowercase().contains("speaking") {
+                    err.category.clone()
+                } else {
+                    format!("Speaking · {}", err.category)
+                };
+                let _ = db::upsert_error_log(&conn, &cat, &err.wrong, &err.fix);
+            }
+        }
+        let (s, ticked) = db::save_speaking_session(
+            &conn,
+            cue_id,
+            &cue_title,
+            &track,
+            &mode,
+            payload.wpm_start,
+            payload.wpm_end,
+            payload.fillers_start,
+            payload.fillers_end,
+            payload.fc_band,
+            payload.lr_band,
+            payload.gra_band,
+            payload.p_band,
+            payload.overall_band,
+            &payload.progress_note,
+            &payload.transcript,
+            &feedback_json,
+            today,
+        )?;
+        let _ = db::write_widget_status(&conn);
+        (s, ticked)
+    };
+
+    Ok(SpeakingGradeResponse {
+        session,
+        top_errors: payload.top_errors,
+        endpoint,
+        marked_quest_done,
+    })
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+fn save_speaking_manual_session(
+    state: State<'_, AppState>,
+    cue_id: Option<i64>,
+    cue_title: String,
+    track: String,
+    mode: String,
+    fc_band: f64,
+    lr_band: f64,
+    gra_band: f64,
+    p_band: f64,
+    progress_note: String,
+    transcript: String,
+    feedback_json: String,
+    errors: Option<Vec<SpeakingErrorItem>>,
+) -> Result<SpeakingGradeResponse, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let today = Local::now().date_naive();
+    let overall = ((fc_band + lr_band + gra_band + p_band) / 4.0 * 2.0).round() / 2.0;
+
+    let errs = errors.unwrap_or_default();
+    for err in errs.iter().take(3) {
+        if !err.wrong.trim().is_empty() && !err.fix.trim().is_empty() {
+            let cat = if err.category.trim().is_empty() {
+                "Speaking".to_string()
+            } else if err.category.to_lowercase().contains("speaking") {
+                err.category.clone()
+            } else {
+                format!("Speaking · {}", err.category)
+            };
+            let _ = db::upsert_error_log(&conn, &cat, &err.wrong, &err.fix);
+        }
+    }
+
+    let (session, marked_quest_done) = db::save_speaking_session(
+        &conn,
+        cue_id,
+        &cue_title,
+        &track,
+        &mode,
+        0,
+        0,
+        0,
+        0,
+        fc_band,
+        lr_band,
+        gra_band,
+        p_band,
+        overall,
+        &progress_note,
+        &transcript,
+        &feedback_json,
+        today,
+    )?;
+    let _ = db::write_widget_status(&conn);
+
+    Ok(SpeakingGradeResponse {
+        session,
+        top_errors: errs,
+        endpoint: "manual/self-check".to_string(),
+        marked_quest_done,
+    })
+}
+
+#[tauri::command]
+fn list_speaking_sessions(state: State<'_, AppState>) -> Result<Vec<SpeakingSession>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::list_speaking_sessions(&conn)
+}
+
+#[tauri::command]
 async fn grade_writing(
     state: State<'_, AppState>,
     mode: String,
     prompt: String,
     content: String,
 ) -> Result<GradeResponseDto, String> {
-    let (api_key, model, focus_notes, target_band) = {
+    let (api_key, model, focus_notes, target_band, top_errors) = {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         let s = db::get_settings_raw(&conn)?;
-        (s.gemini_api_key, s.gemini_model, s.writing_focus_notes, s.target_band)
+        let top3 = db::get_top_errors(&conn, 3)?;
+        (
+            s.gemini_api_key,
+            s.gemini_model,
+            s.writing_focus_notes,
+            s.target_band,
+            top3,
+        )
     };
 
     let (result, endpoint) = ai::grade_writing_with_gemini(
@@ -123,6 +414,7 @@ async fn grade_writing(
         &prompt,
         &content,
         &focus_notes,
+        &top_errors,
         target_band,
     )
     .await?;
@@ -164,7 +456,12 @@ fn save_corrections_to_errors(
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     for c in corrections {
         if !c.wrong.trim().is_empty() && !c.right.trim().is_empty() {
-            db::upsert_error_log(&conn, &c.category, &c.wrong, &c.right)?;
+            let cat = if c.category.to_lowercase().contains("writing") {
+                c.category
+            } else {
+                format!("Writing · {}", c.category)
+            };
+            db::upsert_error_log(&conn, &cat, &c.wrong, &c.right)?;
         }
     }
     db::get_dashboard_state(&conn)
@@ -212,6 +509,7 @@ fn set_study_level(state: State<'_, AppState>, level: String) -> Result<Dashboar
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 fn update_settings(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -223,6 +521,7 @@ fn update_settings(
     autostart: Option<bool>,
     target_band: Option<f64>,
     onboarding_done: Option<bool>,
+    tts_accent: Option<String>,
 ) -> Result<SettingsPublic, String> {
     if let Some(enable) = autostart {
         let mgr = app.autolaunch();
@@ -243,6 +542,7 @@ fn update_settings(
         autostart,
         target_band,
         onboarding_done,
+        tts_accent,
     )?;
     let _ = db::write_widget_status(&conn);
     Ok(res)
@@ -380,7 +680,6 @@ fn import_db_backup(state: State<'_, AppState>) -> Result<RestoreResultDto, Stri
     let target_db = db::db_file_path()?;
 
     let mut conn_guard = state.db.lock().map_err(|e| e.to_string())?;
-    // Flush and close the existing file-backed connection before replacing the .db file
     let _ = conn_guard.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
     let temp_mem = Connection::open_in_memory().map_err(|e| e.to_string())?;
     let old_conn = std::mem::replace(&mut *conn_guard, temp_mem);
@@ -564,7 +863,7 @@ fn spawn_reminder_loop(app_handle: tauri::AppHandle) {
                 let Ok(settings) = db::get_settings_raw(&conn) else { continue };
                 let done_count: i64 = conn
                     .query_row(
-                        "SELECT COUNT(*) FROM daily_quests WHERE date = ?1 AND done = 1",
+                        "SELECT COUNT(*) FROM daily_quests WHERE date = ?1 AND done = 1 AND COALESCE(tier, 'core') = 'core'",
                         rusqlite::params![today],
                         |r| r.get(0),
                     )
@@ -587,7 +886,7 @@ fn spawn_reminder_loop(app_handle: tauri::AppHandle) {
                         let msg = if streak > 0 {
                             format!("Còn 15p học IELTS để giữ streak {streak} ngày!")
                         } else {
-                            "Đến giờ học IELTS 6.5! Hoàn thành 1 nhiệm vụ hôm nay nhé.".to_string()
+                            "Đến giờ học IELTS! Hoàn thành 1 nhiệm vụ Core hôm nay nhé.".to_string()
                         };
                         let _ = app_handle
                             .notification()
@@ -670,8 +969,24 @@ pub fn run() {
             add_pomodoro_minutes,
             get_due_vocab,
             review_vocab,
+            add_vocab_card,
+            cure_leech_card,
+            toggle_hide_vocab_card,
+            delete_vocab_card,
             generate_vocab_quiz,
             submit_vocab_quiz,
+            generate_error_fix_quiz,
+            generate_micro_check,
+            submit_micro_check,
+            get_dictation_batch,
+            submit_dictation_session,
+            list_paraphrases,
+            add_paraphrase,
+            delete_paraphrase,
+            get_speaking_cue,
+            grade_speaking_audio,
+            save_speaking_manual_session,
+            list_speaking_sessions,
             grade_writing,
             save_corrections_to_errors,
             add_error_log,

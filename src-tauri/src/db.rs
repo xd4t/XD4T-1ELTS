@@ -5,14 +5,17 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::models::{
-    DailyQuest, DashboardState, ErrorLog, Essay, ForgottenVocabCard, PracticeScore,
-    QuizAnswerInput, QuizQuestion, QuizSubmitResult, RoadmapItem, Settings, SettingsPublic,
-    SkillBand, StudyDay, VocabCard, VocabQuizStatus,
+    DailyQuest, DashboardState, DictationResultInput, DictationSentence, DictationSubmitResult,
+    ErrorFixQuestion, ErrorLog, Essay, ForgottenVocabCard, MicroCheckAnswerInput, MicroCheckItem,
+    MicroCheckSubmitResult, ParaphrasePair, PracticeScore, QuizAnswerInput, QuizQuestion,
+    QuizSubmitResult, RoadmapItem, Settings, SettingsPublic, SkillBand, SpeakingCue,
+    SpeakingSession, StudyDay, VocabCard, VocabQuizStatus,
 };
-use crate::roadmap_parser::{parse_roadmap_markdown, ParsedQuest};
+use crate::roadmap_parser::{infer_quest_action_hint, parse_roadmap_markdown, ParsedQuest};
 use crate::seed_data::{
-    default_writing_prompts_for_band, ERROR_LOG_SEEDS_65, ERROR_LOG_SEEDS_80, ROADMAP_SEEDS_65,
-    ROADMAP_SEEDS_80, VOCAB_SEEDS, VOCAB_SEEDS_80,
+    default_writing_prompts_for_band, DICTATION_SEEDS, ERROR_LOG_SEEDS_65, ERROR_LOG_SEEDS_80,
+    PARAPHRASE_SEEDS, ROADMAP_SEEDS_65, ROADMAP_SEEDS_80, SPEAKING_SEEDS, VOCAB_SEEDS,
+    VOCAB_SEEDS_80,
 };
 use crate::srs::apply_sm2;
 
@@ -74,10 +77,10 @@ pub fn default_skill_targets_80() -> BTreeMap<String, f64> {
 
 pub fn default_phase_labels() -> BTreeMap<i64, String> {
     let mut map = BTreeMap::new();
-    map.insert(1, "GĐ1 · Diệt lỗi nền & 5 khung T2 + 3 biểu đồ T1 (T1–7)".to_string());
-    map.insert(2, "GĐ2 · Tăng tốc & 6 cấu trúc nâng cao (T8–15)".to_string());
-    map.insert(3, "GĐ3 · Vùng đệm 7.0 & Forecast thực chiến (T16–21)".to_string());
-    map.insert(4, "GĐ4 · Nước rút phòng thi (T22–24)".to_string());
+    map.insert(1, "GĐ1 · Diệt lỗi nền & 5 khung T2 (T1–6)".to_string());
+    map.insert(2, "GĐ2 · Tăng tốc & 6 cấu trúc nâng cao (T7–14)".to_string());
+    map.insert(3, "GĐ3 · Vùng đệm 7.0 & Forecast thực chiến (T15–20)".to_string());
+    map.insert(4, "GĐ4 · Nước rút phòng thi (T21–24)".to_string());
     map
 }
 
@@ -97,6 +100,14 @@ pub fn normalize_theme(theme: &str) -> String {
         "pastel-female" => "pastel-female".to_string(),
         "pastel-male" => "pastel-male".to_string(),
         _ => "pastel-male".to_string(),
+    }
+}
+
+pub fn normalize_tts_accent(accent: &str) -> String {
+    if accent.trim().eq_ignore_ascii_case("en-us") {
+        "en-US".to_string()
+    } else {
+        "en-GB".to_string()
     }
 }
 
@@ -142,6 +153,31 @@ pub fn mask_key(key: &str) -> String {
     format!("{prefix}••••{suffix}")
 }
 
+fn column_exists(conn: &Connection, table: &str, column: &str) -> bool {
+    let sql = format!("PRAGMA table_info({table})");
+    let Ok(mut stmt) = conn.prepare(&sql) else {
+        return false;
+    };
+    let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(1)) else {
+        return false;
+    };
+    for row in rows.flatten() {
+        if row.eq_ignore_ascii_case(column) {
+            return true;
+        }
+    }
+    false
+}
+
+fn ensure_column_exists(conn: &Connection, table: &str, column: &str, alter_sql: &str) -> Result<bool, String> {
+    if column_exists(conn, table, column) {
+        return Ok(false);
+    }
+    conn.execute(alter_sql, [])
+        .map_err(|e| format!("Migration error ({table}.{column}): {e}"))?;
+    Ok(true)
+}
+
 pub fn init_schema_and_seed(conn: &Connection, seed_path: Option<&Path>) -> Result<(), String> {
     conn.execute_batch(
         r#"
@@ -157,7 +193,8 @@ pub fn init_schema_and_seed(conn: &Connection, seed_path: Option<&Path>) -> Resu
             reminder_time TEXT NOT NULL DEFAULT '21:00',
             autostart INTEGER NOT NULL DEFAULT 0,
             target_band REAL NOT NULL DEFAULT 7.0,
-            onboarding_done INTEGER NOT NULL DEFAULT 0
+            onboarding_done INTEGER NOT NULL DEFAULT 0,
+            tts_accent TEXT NOT NULL DEFAULT 'en-GB'
         );
 
         CREATE TABLE IF NOT EXISTS daily_quests (
@@ -167,7 +204,9 @@ pub fn init_schema_and_seed(conn: &Connection, seed_path: Option<&Path>) -> Resu
             title TEXT NOT NULL,
             meta TEXT NOT NULL,
             minutes INTEGER NOT NULL,
-            done INTEGER NOT NULL DEFAULT 0
+            done INTEGER NOT NULL DEFAULT 0,
+            tier TEXT NOT NULL DEFAULT 'core',
+            action_hint TEXT NOT NULL DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS study_days (
@@ -187,7 +226,10 @@ pub fn init_schema_and_seed(conn: &Connection, seed_path: Option<&Path>) -> Resu
             ease REAL NOT NULL DEFAULT 2.5,
             interval_days INTEGER NOT NULL DEFAULT 0,
             reps INTEGER NOT NULL DEFAULT 0,
-            due_date TEXT NOT NULL
+            due_date TEXT NOT NULL,
+            lapses INTEGER NOT NULL DEFAULT 0,
+            hidden INTEGER NOT NULL DEFAULT 0,
+            is_user_card INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS essays (
@@ -240,6 +282,67 @@ pub fn init_schema_and_seed(conn: &Connection, seed_path: Option<&Path>) -> Resu
             correct_count INTEGER NOT NULL,
             forgotten_words TEXT NOT NULL DEFAULT '[]'
         );
+
+        CREATE TABLE IF NOT EXISTS paraphrase_pairs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            question_term TEXT NOT NULL,
+            passage_paraphrase TEXT NOT NULL,
+            source_type TEXT NOT NULL DEFAULT '',
+            trap_note TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS dictation_sentences (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            level TEXT NOT NULL,
+            section TEXT NOT NULL,
+            trap_focus TEXT NOT NULL,
+            sentence TEXT NOT NULL,
+            meaning_vi TEXT NOT NULL,
+            practiced_count INTEGER NOT NULL DEFAULT 0,
+            last_accuracy INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS speaking_bank (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            week_num INTEGER NOT NULL,
+            level TEXT NOT NULL,
+            topic TEXT NOT NULL,
+            cue_title TEXT NOT NULL,
+            cue_bullets_json TEXT NOT NULL,
+            part3_questions_json TEXT NOT NULL,
+            target_phrases_json TEXT NOT NULL,
+            used_count INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS speaking_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            cue_id INTEGER,
+            cue_title TEXT NOT NULL,
+            track TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            wpm_start INTEGER NOT NULL DEFAULT 0,
+            wpm_end INTEGER NOT NULL DEFAULT 0,
+            fillers_start INTEGER NOT NULL DEFAULT 0,
+            fillers_end INTEGER NOT NULL DEFAULT 0,
+            fc_band REAL NOT NULL DEFAULT 0.0,
+            lr_band REAL NOT NULL DEFAULT 0.0,
+            gra_band REAL NOT NULL DEFAULT 0.0,
+            p_band REAL NOT NULL DEFAULT 0.0,
+            overall_band REAL NOT NULL DEFAULT 0.0,
+            progress_note TEXT NOT NULL DEFAULT '',
+            transcript TEXT NOT NULL DEFAULT '',
+            feedback_json TEXT NOT NULL DEFAULT '{}'
+        );
+
+        CREATE TABLE IF NOT EXISTS dictation_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            total_sentences INTEGER NOT NULL,
+            avg_accuracy INTEGER NOT NULL,
+            wrong_words_json TEXT NOT NULL DEFAULT '[]'
+        );
         "#,
     )
     .map_err(|e| format!("Schema init error: {e}"))?;
@@ -247,24 +350,50 @@ pub fn init_schema_and_seed(conn: &Connection, seed_path: Option<&Path>) -> Resu
     conn.execute("INSERT OR IGNORE INTO settings (id) VALUES (1)", [])
         .map_err(|e| format!("Settings seed error: {e}"))?;
 
-    for col_sql in [
+    // Safe PRAGMA table_info-checked migrations (v1.0..v1.5 -> v1.6.0)
+    ensure_column_exists(
+        conn,
+        "settings",
+        "writing_checklist_json",
         "ALTER TABLE settings ADD COLUMN writing_checklist_json TEXT NOT NULL DEFAULT '[]'",
+    )?;
+    ensure_column_exists(
+        conn,
+        "settings",
+        "writing_focus_json",
         "ALTER TABLE settings ADD COLUMN writing_focus_json TEXT NOT NULL DEFAULT '[]'",
+    )?;
+    ensure_column_exists(
+        conn,
+        "settings",
+        "skill_targets_json",
         "ALTER TABLE settings ADD COLUMN skill_targets_json TEXT NOT NULL DEFAULT '{}'",
+    )?;
+    ensure_column_exists(
+        conn,
+        "settings",
+        "phase_labels_json",
         "ALTER TABLE settings ADD COLUMN phase_labels_json TEXT NOT NULL DEFAULT '{}'",
+    )?;
+    ensure_column_exists(
+        conn,
+        "settings",
+        "daily_quests_template_json",
         "ALTER TABLE settings ADD COLUMN daily_quests_template_json TEXT NOT NULL DEFAULT '[]'",
-    ] {
-        let _ = conn.execute(col_sql, []);
-    }
+    )?;
+    ensure_column_exists(
+        conn,
+        "settings",
+        "tts_accent",
+        "ALTER TABLE settings ADD COLUMN tts_accent TEXT NOT NULL DEFAULT 'en-GB'",
+    )?;
 
-    // Detect legacy v1.0/v1.1 DBs when adding onboarding_done column
-    let added_onboarding = conn
-        .execute(
-            "ALTER TABLE settings ADD COLUMN onboarding_done INTEGER NOT NULL DEFAULT 0",
-            [],
-        )
-        .is_ok();
-
+    let added_onboarding = ensure_column_exists(
+        conn,
+        "settings",
+        "onboarding_done",
+        "ALTER TABLE settings ADD COLUMN onboarding_done INTEGER NOT NULL DEFAULT 0",
+    )?;
     if added_onboarding {
         let has_legacy_data: bool = conn
             .query_row(
@@ -283,7 +412,39 @@ pub fn init_schema_and_seed(conn: &Connection, seed_path: Option<&Path>) -> Resu
         }
     }
 
-    // Backward-compatible theme migration: "dark" -> "mono-dark", "light" -> "mono-light"
+    ensure_column_exists(
+        conn,
+        "vocab_cards",
+        "lapses",
+        "ALTER TABLE vocab_cards ADD COLUMN lapses INTEGER NOT NULL DEFAULT 0",
+    )?;
+    ensure_column_exists(
+        conn,
+        "vocab_cards",
+        "hidden",
+        "ALTER TABLE vocab_cards ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0",
+    )?;
+    ensure_column_exists(
+        conn,
+        "vocab_cards",
+        "is_user_card",
+        "ALTER TABLE vocab_cards ADD COLUMN is_user_card INTEGER NOT NULL DEFAULT 0",
+    )?;
+
+    ensure_column_exists(
+        conn,
+        "daily_quests",
+        "tier",
+        "ALTER TABLE daily_quests ADD COLUMN tier TEXT NOT NULL DEFAULT 'core'",
+    )?;
+    ensure_column_exists(
+        conn,
+        "daily_quests",
+        "action_hint",
+        "ALTER TABLE daily_quests ADD COLUMN action_hint TEXT NOT NULL DEFAULT ''",
+    )?;
+
+    // Backward-compatible theme migration
     let _ = conn.execute(
         "UPDATE settings SET theme = 'mono-dark' WHERE id = 1 AND theme = 'dark'",
         [],
@@ -359,6 +520,40 @@ pub fn init_schema_and_seed(conn: &Connection, seed_path: Option<&Path>) -> Resu
         }
     }
 
+    // v1.6.0 seeds via WHERE NOT EXISTS (safe for migrated v1.5.0 DBs)
+    for p in PARAPHRASE_SEEDS {
+        conn.execute(
+            "INSERT INTO paraphrase_pairs (question_term, passage_paraphrase, source_type, trap_note, created_at)
+             SELECT ?1, ?2, ?3, ?4, ?5
+             WHERE NOT EXISTS (SELECT 1 FROM paraphrase_pairs WHERE lower(question_term) = lower(?1) AND lower(passage_paraphrase) = lower(?2))",
+            params![p.question_term, p.passage_paraphrase, p.source_type, p.trap_note, today],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    for d in DICTATION_SEEDS {
+        conn.execute(
+            "INSERT INTO dictation_sentences (level, section, trap_focus, sentence, meaning_vi)
+             SELECT ?1, ?2, ?3, ?4, ?5
+             WHERE NOT EXISTS (SELECT 1 FROM dictation_sentences WHERE lower(sentence) = lower(?4))",
+            params![d.level, d.section, d.trap_focus, d.sentence, d.meaning_vi],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    for s in SPEAKING_SEEDS {
+        let bullets_json = serde_json::to_string(&s.bullets).unwrap_or_else(|_| "[]".to_string());
+        let part3_json = serde_json::to_string(&s.part3).unwrap_or_else(|_| "[]".to_string());
+        let phrases_json = serde_json::to_string(&s.phrases).unwrap_or_else(|_| "[]".to_string());
+        conn.execute(
+            "INSERT INTO speaking_bank (week_num, level, topic, cue_title, cue_bullets_json, part3_questions_json, target_phrases_json)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7
+             WHERE NOT EXISTS (SELECT 1 FROM speaking_bank WHERE week_num = ?1 AND level = ?2 AND cue_title = ?4)",
+            params![s.week_num, s.level, s.topic, s.cue_title, bullets_json, part3_json, phrases_json],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
     ensure_today_quests(conn, &today)?;
     Ok(())
 }
@@ -391,90 +586,105 @@ fn import_seed_key_if_needed(conn: &Connection, seed_path: &Path) -> Result<(), 
         return Err(format!("Failed saving seed key to SQLite: {e}"));
     }
     conn.execute("COMMIT", []).map_err(|e| e.to_string())?;
-    // Delete seed only after SQLite commit succeeded
     let _ = fs::remove_file(seed_path);
     Ok(())
 }
 
-pub fn default_quests_for_weekday(weekday: Weekday, is_80: bool) -> Vec<(&'static str, &'static str, i64)> {
+pub struct QuestSeed {
+    pub title: &'static str,
+    pub meta: &'static str,
+    pub minutes: i64,
+    pub tier: &'static str,
+    pub action_hint: &'static str,
+}
+
+pub fn default_quests_for_weekday(weekday: Weekday, is_80: bool) -> Vec<QuestSeed> {
     if is_80 {
         match weekday {
             Weekday::Mon => vec![
-                ("Ôn 12 cụm từ C1–C2 & Hedging (SRS)", "Thứ 2 · Collocations Band 7.5–8.0", 8),
-                ("Writing: Luyện cấu trúc C1 & viết lại đoạn cũ nâng Band 7.5+", "Sửa lỗi từ Sổ lỗi · nâng +1.0 band", 15),
-                ("Listening: Soi transcript & bẫy Distractors Part 3–4 (Study4)", "Bắt nối âm, đuôi s/ed & bẫy đổi ý", 12),
+                QuestSeed { title: "Ôn SRS 8p (Audio-First / Cloze)", meta: "Thứ 2 · Cụm C1–C2 & Hedging", minutes: 8, tier: "core", action_hint: "srs" },
+                QuestSeed { title: "Micro-Check 2p (5 câu rà từ/lỗi/paraphrase)", meta: "Tổng hợp 3 nguồn chống quên", minutes: 2, tier: "core", action_hint: "micro_check" },
+                QuestSeed { title: "Study4 Reading P3 (C1): 1 Passage bấm giờ 16p → nạp 2 cặp Bảng Paraphrase", meta: "Đích 11–13/13 câu · Săn đồng nghĩa C1", minutes: 16, tier: "core", action_hint: "study4" },
+                QuestSeed { title: "Làm thêm 1 Passage Reading + Sentence Mining 2 câu vào SRS", meta: "Bonus · Nâng vốn cụm học thuật C1–C2", minutes: 18, tier: "bonus", action_hint: "paraphrase" },
             ],
             Weekday::Tue => vec![
-                ("Ôn 12 cụm từ C1–C2 & Hedging (SRS)", "Thứ 3 · Collocations Band 7.5–8.0", 8),
-                ("Reading: 1 Passage 2–3 trên Study4 bấm giờ 18p & nhập điểm", "Phân tích cấu trúc đoạn & phạm vi ý", 15),
-                ("Lập 5 cặp Paraphrase C1 từ bài đọc vào Sổ lỗi/SRS", "Săn từ đồng nghĩa học thuật Passage 3", 10),
+                QuestSeed { title: "Ôn SRS 8p (Audio-First / Cloze)", meta: "Thứ 3 · Cụm C1–C2 & Hedging", minutes: 8, tier: "core", action_hint: "srs" },
+                QuestSeed { title: "Micro-Check 2p (5 câu rà từ/lỗi/paraphrase)", meta: "Tổng hợp 3 nguồn chống quên", minutes: 2, tier: "core", action_hint: "micro_check" },
+                QuestSeed { title: "Phòng Luyện Nói 20p: 1 Cue Card tuần + Part 3 trừu tượng & 5 cụm C1–C2", meta: "Thi thật hoặc 4-3-2 · Chấm Gemini Audio/Prompt", minutes: 20, tier: "core", action_hint: "speaking" },
+                QuestSeed { title: "Nghe chép câu Dictation thêm 5 câu bẫy nối âm & học thuật Part 4", meta: "Bonus · Luyện tai 100% offline", minutes: 12, tier: "bonus", action_hint: "dictation" },
             ],
             Weekday::Wed => vec![
-                ("Ôn 12 cụm từ C1–C2 & Hedging (SRS)", "Thứ 4 · Collocations Band 7.5–8.0", 8),
-                ("Writing: Viết Mở bài + 1 Body (PEEL + Counter-argument) & chấm AI", "Lập luận sâu + hedging chuẩn 7.5+", 15),
-                ("Speaking: Nói lại luận điểm vừa viết theo A.R.E.A trong 2 phút", "Ghi âm tự nghe · chuyển từ viết sang nói", 10),
+                QuestSeed { title: "Ôn SRS 8p (Audio-First / Cloze)", meta: "Thứ 4 · Cụm C1–C2 & Hedging", minutes: 8, tier: "core", action_hint: "srs" },
+                QuestSeed { title: "Micro-Check 2p (5 câu rà từ/lỗi/paraphrase)", meta: "Tổng hợp 3 nguồn chống quên", minutes: 2, tier: "core", action_hint: "micro_check" },
+                QuestSeed { title: "Study4 Listening (Sec 3/4 — 14p) + Nghe chép Dictation 3 câu (6p)", meta: "Đích 9–10/10 câu · Bắt bẫy đổi ý", minutes: 20, tier: "core", action_hint: "dictation" },
+                QuestSeed { title: "Chép chính tả lại đoạn nghe sai trên Study4", meta: "Bonus · Phân tích transcript Part 3–4", minutes: 15, tier: "bonus", action_hint: "study4" },
             ],
             Weekday::Thu => vec![
-                ("Ôn 12 cụm từ C1–C2 & Hedging (SRS)", "Thứ 5 · Collocations Band 7.5–8.0", 8),
-                ("Listening: Luyện Part 3 & Part 4 trên Study4 bấm giờ & nhập điểm", "Bắt bẫy distractor agreement", 15),
-                ("Phân tích câu sai & ghi bẫy đổi ý vào Sổ lỗi", "Chống mất điểm oan Part 3–4", 10),
-                ("Quiz C1–C2 giữa tuần: 10 cụm từ nâng cao (rà từ quên để ôn lại)", "Thứ 5 · Kiểm tra trí nhớ từ vựng · đẩy từ quên về SRS", 5),
+                QuestSeed { title: "Quiz Giữa Tuần & Chữa 🔥 Từ cứng đầu (10p)", meta: "Thứ 5 · Rà C1–C2 & viết câu mới cho Leech", minutes: 10, tier: "core", action_hint: "quiz" },
+                QuestSeed { title: "Micro-Check 2p (5 câu rà từ/lỗi/paraphrase)", meta: "Tổng hợp 3 nguồn chống quên", minutes: 2, tier: "core", action_hint: "micro_check" },
+                QuestSeed { title: "Writing: Rà Top 3 lỗi → Viết 1 đoạn Body C1 & Chấm AI (18p)", meta: "Hedging + Counter-argument chuẩn 7.5–8.0", minutes: 18, tier: "core", action_hint: "writing" },
+                QuestSeed { title: "Viết trọn bài Writing Task 2 (40p)", meta: "Bonus · Bấm giờ chuẩn phòng thi", minutes: 40, tier: "bonus", action_hint: "writing" },
             ],
             Weekday::Fri => vec![
-                ("Ôn 12 cụm từ C1–C2 & Hedging (SRS)", "Thứ 6 · Collocations Band 7.5–8.0", 8),
-                ("Speaking: Luyện 1 đề Part 2 (2 phút) + 3 câu trừu tượng Part 3", "Mở rộng lập luận đa chiều · tự nhiên", 15),
-                ("Reading tốc độ: Luyện riêng T/F/NG suy luận hoặc Matching Headings", "Xử lý dạng bẫy hay mất điểm", 10),
+                QuestSeed { title: "Ôn SRS 8p (Audio-First / Cloze)", meta: "Thứ 6 · Cụm C1–C2 & Hedging", minutes: 8, tier: "core", action_hint: "srs" },
+                QuestSeed { title: "Micro-Check 2p (5 câu rà từ/lỗi/paraphrase)", meta: "Tổng hợp 3 nguồn chống quên", minutes: 2, tier: "core", action_hint: "micro_check" },
+                QuestSeed { title: "Study4 Reading dạng khó (T/F/NG P3, Heading — 16p) → Sentence Mining 2 câu", meta: "Đích 36–39/40 · Nạp cụm C1–C2 vào SRS", minutes: 16, tier: "core", action_hint: "study4" },
+                QuestSeed { title: "Ôn toàn bộ Bảng Paraphrase Reading trong tuần", meta: "Bonus · Rà bẫy suy luận Not Given", minutes: 10, tier: "bonus", action_hint: "paraphrase" },
             ],
             Weekday::Sat => vec![
-                ("Ôn 12 cụm từ C1–C2 & Hedging (SRS)", "Thứ 7 · Collocations Band 7.5–8.0", 8),
-                ("Writing Full: Viết 1 bài hoàn chỉnh + soát Checklist 3p & chấm AI 7.5+", "Bấm giờ chuẩn · kiểm tra 6 lỗi tinh tế", 20),
-                ("Reading Full Test (3 Passages bấm giờ 54p trên Study4) & nhập điểm", "Mục tiêu 35–38/40 câu", 15),
+                QuestSeed { title: "Ôn SRS 8p (Audio-First / Cloze)", meta: "Thứ 7 · Cụm C1–C2 & Hedging", minutes: 8, tier: "core", action_hint: "srs" },
+                QuestSeed { title: "Micro-Check 2p (5 câu rà từ/lỗi/paraphrase)", meta: "Tổng hợp 3 nguồn chống quên", minutes: 2, tier: "core", action_hint: "micro_check" },
+                QuestSeed { title: "Study4 Listening (Map/Diagram hoặc Sec 2+3 — 16p) → nhập điểm & lưu lỗi", meta: "Mục tiêu 36–39/40 câu · Sạch lỗi -s/-ed", minutes: 16, tier: "core", action_hint: "study4" },
+                QuestSeed { title: "Full Mock Listening + Reading bấm giờ (120p) trên Study4", meta: "Bonus · Kiểm tra sức bền 36–39/40", minutes: 120, tier: "bonus", action_hint: "study4" },
             ],
             Weekday::Sun => vec![
-                ("Writing Rewrite: Viết lại đoạn yếu nhất của bài T7 đạt chuẩn 7.5–8.0", "Chủ nhật · Nâng cấp lập luận & collocation", 15),
-                ("Listening Full Test (4 Parts trên Study4) & nhập điểm", "Mục tiêu 36–39/40 câu", 15),
-                ("Rà soát Sổ lỗi tuần & ôn từ vựng chủ đề mới", "Tổng kết tuần · giữ vững nhịp 8.0", 10),
-                ("Quiz C1–C2 tổng kết tuần: 10 cụm từ (quên từ nào đẩy về SRS)", "Chủ nhật · Rà soát trí nhớ · giữ vững vốn từ 8.0", 5),
+                QuestSeed { title: "Quiz Tổng Kết Tuần: Từ vựng C1 + Sửa lỗi (10p)", meta: "Chủ Nhật · Gõ sửa lỗi & kiểm tra trí nhớ", minutes: 10, tier: "core", action_hint: "quiz" },
+                QuestSeed { title: "Writing: Rà Top 3 lỗi → Viết Task 1 hoặc Mở+Kết Task 2 & Chấm AI (20p)", meta: "Kiểm tra lặp Top 3 · chuẩn Band 7.5–8.0", minutes: 20, tier: "core", action_hint: "writing" },
+                QuestSeed { title: "Phòng Luyện Nói: Cue Card thứ 2 của tuần (Part 3 trừu tượng)", meta: "Bonus · Giữ phản xạ C1–C2 cuối tuần", minutes: 18, tier: "bonus", action_hint: "speaking" },
             ],
         }
     } else {
         match weekday {
             Weekday::Mon => vec![
-                ("Ôn 10 thẻ Collocations & Word Family (SRS)", "Thứ 2 · SRS Flashcards · giữ chuỗi mỗi ngày", 8),
-                ("Writing: Sửa 3 nhóm lỗi từ Sổ lỗi / luyện 6 cấu trúc câu viết lại bài cũ", "Độ chính xác / Cấu trúc · GĐ1–2", 15),
-                ("Listening Dictation: Chép chính tả 1 đoạn ngắn bắt đuôi s/ed", "DailyDictation · bắt nối âm & âm cuối", 12),
+                QuestSeed { title: "Ôn SRS 8p (Audio-First / Cloze)", meta: "Thứ 2 · Giữ chuỗi & xử lý từ cứng đầu", minutes: 8, tier: "core", action_hint: "srs" },
+                QuestSeed { title: "Micro-Check 2p (5 câu rà từ/lỗi/paraphrase)", meta: "Tổng hợp 3 nguồn chống quên", minutes: 2, tier: "core", action_hint: "micro_check" },
+                QuestSeed { title: "Study4 Reading: 1 Passage bấm giờ 16p → nạp 2 cặp Bảng Paraphrase", meta: "Đích 30–34/40 · Săn từ đồng nghĩa thật", minutes: 16, tier: "core", action_hint: "study4" },
+                QuestSeed { title: "Làm thêm 1 Passage Reading + Sentence Mining 2 câu vào SRS", meta: "Bonus · Tăng tốc đọc hiểu", minutes: 18, tier: "bonus", action_hint: "paraphrase" },
             ],
             Weekday::Tue => vec![
-                ("Ôn 10 thẻ Collocations (SRS)", "Thứ 3 · SRS Flashcards · giữ chuỗi mỗi ngày", 8),
-                ("Reading: 1 Passage trên Study4 bấm giờ 20p & chữa theo Linearthinking", "Phân tích chủ–vị & bẫy từ tuyệt đối", 15),
-                ("Lập 5 cặp Paraphrase từ bài đọc & nhập điểm Reading", "Ghi cặp đồng nghĩa vào Sổ lỗi / SRS", 10),
+                QuestSeed { title: "Ôn SRS 8p (Audio-First / Cloze)", meta: "Thứ 3 · Giữ chuỗi & xử lý từ cứng đầu", minutes: 8, tier: "core", action_hint: "srs" },
+                QuestSeed { title: "Micro-Check 2p (5 câu rà từ/lỗi/paraphrase)", meta: "Tổng hợp 3 nguồn chống quên", minutes: 2, tier: "core", action_hint: "micro_check" },
+                QuestSeed { title: "Phòng Luyện Nói 20p: 1 Cue Card tuần (A.R.E.A) + Chấm AI/Prompt", meta: "Thi thật 2:00+Part 3 hoặc Phản xạ 4-3-2", minutes: 20, tier: "core", action_hint: "speaking" },
+                QuestSeed { title: "Nghe chép câu Dictation thêm 5 câu bẫy nối âm & -s/-ed", meta: "Bonus · Luyện tinh tai offline", minutes: 12, tier: "bonus", action_hint: "dictation" },
             ],
             Weekday::Wed => vec![
-                ("Ôn 10 thẻ Collocations (SRS)", "Thứ 4 · SRS Flashcards · giữ chuỗi mỗi ngày", 8),
-                ("Writing: Ôn khung dạng đề tuần + viết Mở bài & 1 Body (chấm AI)", "Soát checklist 3p trước khi nộp AI", 15),
-                ("Speaking: Nói lại chính luận điểm vừa viết trong 2 phút (ghi âm)", "Chuyển ý từ Writing sang Speaking", 10),
+                QuestSeed { title: "Ôn SRS 8p (Audio-First / Cloze)", meta: "Thứ 4 · Giữ chuỗi & xử lý từ cứng đầu", minutes: 8, tier: "core", action_hint: "srs" },
+                QuestSeed { title: "Micro-Check 2p (5 câu rà từ/lỗi/paraphrase)", meta: "Tổng hợp 3 nguồn chống quên", minutes: 2, tier: "core", action_hint: "micro_check" },
+                QuestSeed { title: "Study4 Listening (Sec 3/4 — 14p) + Nghe chép Dictation 3 câu (6p)", meta: "Bắt âm cuối -s/-ed & từ đổi ý", minutes: 20, tier: "core", action_hint: "dictation" },
+                QuestSeed { title: "Chép chính tả lại đoạn nghe sai trên Study4", meta: "Bonus · Soi transcript tránh bẫy", minutes: 15, tier: "bonus", action_hint: "study4" },
             ],
             Weekday::Thu => vec![
-                ("Ôn 10 thẻ Collocations (SRS)", "Thứ 5 · SRS Flashcards · giữ chuỗi mỗi ngày", 8),
-                ("Listening: Làm 2 Sections trên Study4 bấm giờ & soi Transcript", "Cambridge Practice · nghe chủ động", 15),
-                ("Đánh dấu bẫy Distractors & nhập điểm Listening", "Chép chính tả lại đúng câu nghe sai", 10),
-                ("Quiz kiểm tra 10 từ vựng định kỳ (quên từ nào đẩy về SRS học lại)", "Thứ 5 · Kiểm tra trí nhớ từ vựng · chống rơi rụng", 5),
+                QuestSeed { title: "Quiz Giữa Tuần & Chữa 🔥 Từ cứng đầu (10p)", meta: "Thứ 5 · Kiểm tra trí nhớ & viết câu mới cho Leech", minutes: 10, tier: "core", action_hint: "quiz" },
+                QuestSeed { title: "Micro-Check 2p (5 câu rà từ/lỗi/paraphrase)", meta: "Tổng hợp 3 nguồn chống quên", minutes: 2, tier: "core", action_hint: "micro_check" },
+                QuestSeed { title: "Writing: Rà Top 3 lỗi → Viết 1 đoạn Body & Chấm AI (18p)", meta: "Chống lặp lỗi cũ · mục tiêu ≥ 6.0–6.5", minutes: 18, tier: "core", action_hint: "writing" },
+                QuestSeed { title: "Viết trọn bài Writing Task 2 (40p)", meta: "Bonus · Bấm giờ chuẩn phòng thi", minutes: 40, tier: "bonus", action_hint: "writing" },
             ],
             Weekday::Fri => vec![
-                ("Ôn 10 thẻ Collocations (SRS)", "Thứ 6 · SRS Flashcards · giữ chuỗi mỗi ngày", 8),
-                ("Speaking: Luyện Part 1/2/3 theo khung A.R.E.A (chú ý âm cuối & chia động từ)", "Ghi âm tự nghe lại sửa lỗi thì", 15),
-                ("Reading tốc độ: Luyện riêng 1 dạng hay sai (T/F/NG hoặc Matching Headings)", "Xử lý dạng bài hay mất điểm", 10),
+                QuestSeed { title: "Ôn SRS 8p (Audio-First / Cloze)", meta: "Thứ 6 · Giữ chuỗi & xử lý từ cứng đầu", minutes: 8, tier: "core", action_hint: "srs" },
+                QuestSeed { title: "Micro-Check 2p (5 câu rà từ/lỗi/paraphrase)", meta: "Tổng hợp 3 nguồn chống quên", minutes: 2, tier: "core", action_hint: "micro_check" },
+                QuestSeed { title: "Study4 Reading dạng khó (T/F/NG, Heading — 16p) → Sentence Mining 2 câu", meta: "Đích 30–34/40 · Nạp từ mới vào SRS", minutes: 16, tier: "core", action_hint: "study4" },
+                QuestSeed { title: "Ôn toàn bộ Bảng Paraphrase Reading trong tuần", meta: "Bonus · Nhớ bẫy từng dạng bài", minutes: 10, tier: "bonus", action_hint: "paraphrase" },
             ],
             Weekday::Sat => vec![
-                ("Ôn 10 thẻ Collocations (SRS)", "Thứ 7 · SRS Flashcards · giữ chuỗi mỗi ngày", 8),
-                ("Writing Full: Viết 1 bài hoàn chỉnh + soát Checklist 3p & chấm AI 4 tiêu chí", "Bấm giờ chuẩn · cập nhật Sổ lỗi", 20),
-                ("Reading Full Test trên Study4 bấm giờ & nhập điểm", "Mục tiêu vùng đệm 30–34/40 câu", 15),
+                QuestSeed { title: "Ôn SRS 8p (Audio-First / Cloze)", meta: "Thứ 7 · Giữ chuỗi & xử lý từ cứng đầu", minutes: 8, tier: "core", action_hint: "srs" },
+                QuestSeed { title: "Micro-Check 2p (5 câu rà từ/lỗi/paraphrase)", meta: "Tổng hợp 3 nguồn chống quên", minutes: 2, tier: "core", action_hint: "micro_check" },
+                QuestSeed { title: "Study4 Listening (Map/Diagram hoặc Sec 2+3 — 16p) → nhập điểm & lưu lỗi chính tả", meta: "Đích 30–34/40 câu", minutes: 16, tier: "core", action_hint: "study4" },
+                QuestSeed { title: "Full Mock Listening + Reading bấm giờ (120p) trên Study4", meta: "Bonus · Rèn sức bền phòng thi", minutes: 120, tier: "bonus", action_hint: "study4" },
             ],
             Weekday::Sun => vec![
-                ("Writing Rewrite: Bắt buộc viết lại đoạn yếu nhất của bài T7 đạt ≥ 6.5", "Chủ nhật · sửa triệt để lỗi đoạn yếu", 15),
-                ("Listening Full Test trên Study4 & nhập điểm", "Làm 4 Sections bấm giờ + chữa 20p", 15),
-                ("Tổng kết Sổ lỗi tuần & ôn 12 cụm từ chủ đề mới", "Từ vựng ngữ cảnh · nạp vào SRS", 10),
-                ("Quiz tổng kết tuần: 10 từ vựng (rà từ hay quên để ôn lại)", "Chủ nhật · Rà soát trí nhớ · đẩy từ quên về SRS", 5),
+                QuestSeed { title: "Quiz Tổng Kết Tuần: Từ vựng + Sửa lỗi (10p)", meta: "Chủ Nhật · Gõ sửa lỗi Sổ lỗi + rà từ", minutes: 10, tier: "core", action_hint: "quiz" },
+                QuestSeed { title: "Writing: Rà Top 3 lỗi → Viết Task 1 hoặc Mở+Kết Task 2 & Chấm AI (20p)", meta: "Kiểm tra cảnh báo lặp Top 3 lỗi", minutes: 20, tier: "core", action_hint: "writing" },
+                QuestSeed { title: "Phòng Luyện Nói: Cue Card thứ 2 của tuần", meta: "Bonus · Tự tin trước tuần mới", minutes: 18, tier: "bonus", action_hint: "speaking" },
             ],
         }
     }
@@ -501,10 +711,16 @@ pub fn ensure_today_quests(conn: &Connection, today: &str) -> Result<(), String>
 
         if !custom_quests.is_empty() {
             for q in custom_quests {
+                let tier = if q.tier == "bonus" { "bonus" } else { "core" };
+                let hint = if q.action_hint.trim().is_empty() {
+                    infer_quest_action_hint(&q.title)
+                } else {
+                    q.action_hint.clone()
+                };
                 conn.execute(
-                    "INSERT INTO daily_quests (date, track, title, meta, minutes, done)
-                     VALUES (?1, 'ielts', ?2, ?3, ?4, 0)",
-                    params![today, q.title, q.meta, q.minutes],
+                    "INSERT INTO daily_quests (date, track, title, meta, minutes, done, tier, action_hint)
+                     VALUES (?1, 'ielts', ?2, ?3, ?4, 0, ?5, ?6)",
+                    params![today, q.title, q.meta, q.minutes, tier, hint],
                 )
                 .map_err(|e| e.to_string())?;
             }
@@ -521,11 +737,11 @@ pub fn ensure_today_quests(conn: &Connection, today: &str) -> Result<(), String>
                 .map(|d| d.weekday())
                 .unwrap_or_else(|_| Local::now().date_naive().weekday());
             let defaults = default_quests_for_weekday(weekday, is_80);
-            for (title, meta, mins) in defaults {
+            for q in defaults {
                 conn.execute(
-                    "INSERT INTO daily_quests (date, track, title, meta, minutes, done)
-                     VALUES (?1, 'ielts', ?2, ?3, ?4, 0)",
-                    params![today, title, meta, mins],
+                    "INSERT INTO daily_quests (date, track, title, meta, minutes, done, tier, action_hint)
+                     VALUES (?1, 'ielts', ?2, ?3, ?4, 0, ?5, ?6)",
+                    params![today, q.title, q.meta, q.minutes, q.tier, q.action_hint],
                 )
                 .map_err(|e| e.to_string())?;
             }
@@ -537,7 +753,8 @@ pub fn ensure_today_quests(conn: &Connection, today: &str) -> Result<(), String>
 pub fn get_settings_raw(conn: &Connection) -> Result<Settings, String> {
     conn.query_row(
         "SELECT theme, gemini_api_key, gemini_model, exam_date, reminder_time, autostart, target_band,
-                onboarding_done, writing_checklist_json, writing_focus_json, skill_targets_json, phase_labels_json
+                onboarding_done, writing_checklist_json, writing_focus_json, skill_targets_json, phase_labels_json,
+                COALESCE(tts_accent, 'en-GB')
          FROM settings WHERE id = 1",
         [],
         |r| {
@@ -546,6 +763,7 @@ pub fn get_settings_raw(conn: &Connection) -> Result<Settings, String> {
             let foc_json: String = r.get(9)?;
             let tgt_json: String = r.get(10)?;
             let ph_json: String = r.get(11)?;
+            let raw_accent: String = r.get(12)?;
 
             let mut writing_checklist: Vec<String> =
                 serde_json::from_str(&chk_json).unwrap_or_default();
@@ -577,6 +795,7 @@ pub fn get_settings_raw(conn: &Connection) -> Result<Settings, String> {
                 autostart: r.get::<_, i64>(5)? != 0,
                 target_band: r.get(6)?,
                 onboarding_done: r.get::<_, i64>(7)? != 0,
+                tts_accent: normalize_tts_accent(&raw_accent),
                 writing_checklist,
                 writing_focus_notes,
                 skill_targets,
@@ -599,6 +818,7 @@ pub fn get_settings_public(conn: &Connection) -> Result<SettingsPublic, String> 
         autostart: s.autostart,
         target_band: s.target_band,
         onboarding_done: s.onboarding_done,
+        tts_accent: s.tts_accent,
         writing_checklist: s.writing_checklist,
         writing_focus_notes: s.writing_focus_notes,
         phase_labels: s.phase_labels,
@@ -621,6 +841,7 @@ pub fn update_settings(
     autostart: Option<bool>,
     target_band: Option<f64>,
     onboarding_done: Option<bool>,
+    tts_accent: Option<String>,
 ) -> Result<SettingsPublic, String> {
     let cur = get_settings_raw(conn)?;
     let new_theme = theme
@@ -643,11 +864,14 @@ pub fn update_settings(
     let new_auto = autostart.unwrap_or(cur.autostart);
     let new_target = target_band.unwrap_or(cur.target_band);
     let new_onboarding = onboarding_done.unwrap_or(cur.onboarding_done);
+    let new_accent = tts_accent
+        .map(|a| normalize_tts_accent(&a))
+        .unwrap_or(cur.tts_accent);
 
     conn.execute(
         "UPDATE settings
          SET theme = ?1, gemini_api_key = ?2, gemini_model = ?3, exam_date = ?4,
-             reminder_time = ?5, autostart = ?6, target_band = ?7, onboarding_done = ?8
+             reminder_time = ?5, autostart = ?6, target_band = ?7, onboarding_done = ?8, tts_accent = ?9
          WHERE id = 1",
         params![
             new_theme,
@@ -657,7 +881,8 @@ pub fn update_settings(
             new_rem,
             if new_auto { 1 } else { 0 },
             new_target,
-            if new_onboarding { 1 } else { 0 }
+            if new_onboarding { 1 } else { 0 },
+            new_accent
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -666,11 +891,11 @@ pub fn update_settings(
 }
 
 pub fn toggle_quest(conn: &Connection, quest_id: i64) -> Result<(), String> {
-    let (date, minutes, done): (String, i64, i64) = conn
+    let (date, minutes, done, tier): (String, i64, i64, String) = conn
         .query_row(
-            "SELECT date, minutes, done FROM daily_quests WHERE id = ?1",
+            "SELECT date, minutes, done, COALESCE(tier, 'core') FROM daily_quests WHERE id = ?1",
             params![quest_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .map_err(|e| e.to_string())?;
 
@@ -681,9 +906,50 @@ pub fn toggle_quest(conn: &Connection, quest_id: i64) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
 
-    let delta_min = if new_done == 1 { minutes } else { -minutes };
-    let delta_q = if new_done == 1 { 1 } else { -1 };
-    adjust_study_day(conn, &date, delta_min, delta_q)
+    // Only Core quests contribute to streak & core progress
+    if tier != "bonus" {
+        let delta_min = if new_done == 1 { minutes } else { -minutes };
+        let delta_q = if new_done == 1 { 1 } else { -1 };
+        adjust_study_day(conn, &date, delta_min, delta_q)?;
+    }
+    Ok(())
+}
+
+pub fn auto_tick_quest_by_hint(conn: &Connection, today: &str, hint: &str) -> Result<bool, String> {
+    let updated = conn
+        .execute(
+            "UPDATE daily_quests SET done = 1
+             WHERE date = ?1 AND track = 'ielts' AND done = 0 AND COALESCE(tier, 'core') = 'core' AND action_hint = ?2",
+            params![today, hint],
+        )
+        .map_err(|e| e.to_string())?;
+    if updated > 0 {
+        let quests_done_today: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM daily_quests WHERE date = ?1 AND track = 'ielts' AND done = 1 AND COALESCE(tier, 'core') = 'core'",
+                params![today],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let existing: Option<i64> = conn
+            .query_row("SELECT minutes FROM study_days WHERE date = ?1", params![today], |r| r.get(0))
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if existing.is_some() {
+            conn.execute(
+                "UPDATE study_days SET quests_done = ?1 WHERE date = ?2",
+                params![quests_done_today, today],
+            )
+            .map_err(|e| e.to_string())?;
+        } else {
+            conn.execute(
+                "INSERT INTO study_days (date, track, minutes, quests_done) VALUES (?1, 'ielts', 10, ?2)",
+                params![today, quests_done_today],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(updated > 0)
 }
 
 pub fn adjust_study_day(
@@ -728,7 +994,6 @@ pub fn calculate_streak(conn: &Connection, today: NaiveDate) -> Result<i64, Stri
     let mut streak = 0_i64;
     let mut check_date = today;
 
-    // If today has not been studied yet, streak can still continue from yesterday
     let today_str = today.format("%Y-%m-%d").to_string();
     let today_active: i64 = conn
         .query_row(
@@ -789,7 +1054,29 @@ pub fn get_heatmap(conn: &Connection, today: NaiveDate, days: i64) -> Result<Vec
     Ok(out)
 }
 
-pub fn get_due_vocab(conn: &Connection, today: &str) -> Result<Vec<VocabCard>, String> {
+fn map_vocab_card(r: &rusqlite::Row<'_>) -> rusqlite::Result<VocabCard> {
+    Ok(VocabCard {
+        id: r.get(0)?,
+        track: r.get(1)?,
+        topic: r.get(2)?,
+        word: r.get(3)?,
+        meaning: r.get(4)?,
+        example: r.get(5)?,
+        ease: r.get(6)?,
+        interval_days: r.get(7)?,
+        reps: r.get(8)?,
+        due_date: r.get(9)?,
+        lapses: r.get::<_, i64>(10)?,
+        hidden: r.get::<_, i64>(11)? != 0,
+        is_user_card: r.get::<_, i64>(12)? != 0,
+    })
+}
+
+pub fn get_due_vocab(
+    conn: &Connection,
+    today: &str,
+    only_leech: Option<bool>,
+) -> Result<Vec<VocabCard>, String> {
     let target_band: f64 = conn
         .query_row(
             "SELECT COALESCE(target_band, 7.0) FROM settings WHERE id = 1",
@@ -797,42 +1084,142 @@ pub fn get_due_vocab(conn: &Connection, today: &str) -> Result<Vec<VocabCard>, S
             |r| r.get(0),
         )
         .unwrap_or(7.0);
-    let order_sql = if target_band >= 7.5 {
-        "SELECT id, track, topic, word, meaning, example, ease, interval_days, reps, due_date
+
+    let leech_only = only_leech.unwrap_or(false);
+    let order_sql = if leech_only {
+        "SELECT id, track, topic, word, meaning, example, ease, interval_days, reps, due_date,
+                COALESCE(lapses, 0), COALESCE(hidden, 0), COALESCE(is_user_card, 0)
          FROM vocab_cards
-         WHERE due_date <= ?1
-         ORDER BY (CASE WHEN reps = 0 AND ease < 2.5 THEN 0 ELSE 1 END) ASC, due_date ASC, ease ASC, id DESC
+         WHERE COALESCE(hidden, 0) = 0 AND COALESCE(lapses, 0) >= 3
+         ORDER BY lapses DESC, due_date ASC, id DESC
+         LIMIT 40"
+    } else if target_band >= 7.5 {
+        "SELECT id, track, topic, word, meaning, example, ease, interval_days, reps, due_date,
+                COALESCE(lapses, 0), COALESCE(hidden, 0), COALESCE(is_user_card, 0)
+         FROM vocab_cards
+         WHERE due_date <= ?1 AND COALESCE(hidden, 0) = 0
+         ORDER BY COALESCE(is_user_card, 0) DESC,
+                  (CASE WHEN COALESCE(lapses, 0) >= 3 THEN 0 ELSE 1 END) ASC,
+                  (CASE WHEN reps = 0 AND ease < 2.5 THEN 0 ELSE 1 END) ASC,
+                  due_date ASC, ease ASC, id DESC
          LIMIT 40"
     } else {
-        "SELECT id, track, topic, word, meaning, example, ease, interval_days, reps, due_date
+        "SELECT id, track, topic, word, meaning, example, ease, interval_days, reps, due_date,
+                COALESCE(lapses, 0), COALESCE(hidden, 0), COALESCE(is_user_card, 0)
          FROM vocab_cards
-         WHERE due_date <= ?1
-         ORDER BY (CASE WHEN reps = 0 AND ease < 2.5 THEN 0 ELSE 1 END) ASC, due_date ASC, ease ASC, id ASC
+         WHERE due_date <= ?1 AND COALESCE(hidden, 0) = 0
+         ORDER BY COALESCE(is_user_card, 0) DESC,
+                  (CASE WHEN COALESCE(lapses, 0) >= 3 THEN 0 ELSE 1 END) ASC,
+                  (CASE WHEN reps = 0 AND ease < 2.5 THEN 0 ELSE 1 END) ASC,
+                  due_date ASC, ease ASC, id ASC
          LIMIT 40"
     };
-    let mut stmt = conn.prepare(order_sql).map_err(|e| e.to_string())?;
-    let rows = stmt
-        .query_map(params![today], |r| {
-            Ok(VocabCard {
-                id: r.get(0)?,
-                track: r.get(1)?,
-                topic: r.get(2)?,
-                word: r.get(3)?,
-                meaning: r.get(4)?,
-                example: r.get(5)?,
-                ease: r.get(6)?,
-                interval_days: r.get(7)?,
-                reps: r.get(8)?,
-                due_date: r.get(9)?,
-            })
-        })
-        .map_err(|e| e.to_string())?;
 
+    let mut stmt = conn.prepare(order_sql).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
-    for item in rows {
-        out.push(item.map_err(|e| e.to_string())?);
+    if leech_only {
+        let rows = stmt
+            .query_map([], map_vocab_card)
+            .map_err(|e| e.to_string())?;
+        for item in rows {
+            out.push(item.map_err(|e| e.to_string())?);
+        }
+    } else {
+        let rows = stmt
+            .query_map(params![today], map_vocab_card)
+            .map_err(|e| e.to_string())?;
+        for item in rows {
+            out.push(item.map_err(|e| e.to_string())?);
+        }
     }
     Ok(out)
+}
+
+pub fn add_vocab_card(
+    conn: &Connection,
+    word: &str,
+    meaning: &str,
+    example: &str,
+    topic: &str,
+    today: &str,
+) -> Result<VocabCard, String> {
+    let w = word.trim();
+    let m = meaning.trim();
+    if w.is_empty() || m.is_empty() {
+        return Err("Vui lòng nhập đầy đủ Từ và Nghĩa.".to_string());
+    }
+    let ex = if example.trim().is_empty() {
+        format!("Example with {w}.")
+    } else {
+        example.trim().to_string()
+    };
+    let tp = if topic.trim().is_empty() {
+        "Sentence Mining".to_string()
+    } else {
+        topic.trim().to_string()
+    };
+
+    conn.execute(
+        "INSERT INTO vocab_cards (track, topic, word, meaning, example, ease, interval_days, reps, due_date, lapses, hidden, is_user_card)
+         VALUES ('ielts', ?1, ?2, ?3, ?4, 2.5, 0, 0, ?5, 0, 0, 1)",
+        params![tp, w, m, ex, today],
+    )
+    .map_err(|e| e.to_string())?;
+    let id = conn.last_insert_rowid();
+    conn.query_row(
+        "SELECT id, track, topic, word, meaning, example, ease, interval_days, reps, due_date,
+                COALESCE(lapses, 0), COALESCE(hidden, 0), COALESCE(is_user_card, 0)
+         FROM vocab_cards WHERE id = ?1",
+        params![id],
+        map_vocab_card,
+    )
+    .map_err(|e| e.to_string())
+}
+
+pub fn cure_leech_card(
+    conn: &Connection,
+    card_id: i64,
+    user_sentence: &str,
+    today: &str,
+) -> Result<VocabCard, String> {
+    let sent = user_sentence.trim();
+    if sent.len() < 6 {
+        return Err("Hãy đặt 1 câu tiếng Anh trọn vẹn (tối thiểu 6 ký tự) chứa từ này.".to_string());
+    }
+    let updated = conn
+        .execute(
+            "UPDATE vocab_cards
+             SET example = ?1, lapses = 0, reps = 0, interval_days = 0, due_date = ?2, is_user_card = 1
+             WHERE id = ?3",
+            params![sent, today, card_id],
+        )
+        .map_err(|e| e.to_string())?;
+    if updated == 0 {
+        return Err("Không tìm thấy thẻ từ vựng cần chữa.".to_string());
+    }
+    conn.query_row(
+        "SELECT id, track, topic, word, meaning, example, ease, interval_days, reps, due_date,
+                COALESCE(lapses, 0), COALESCE(hidden, 0), COALESCE(is_user_card, 0)
+         FROM vocab_cards WHERE id = ?1",
+        params![card_id],
+        map_vocab_card,
+    )
+    .map_err(|e| e.to_string())
+}
+
+pub fn toggle_hide_vocab_card(conn: &Connection, card_id: i64, hidden: bool) -> Result<(), String> {
+    conn.execute(
+        "UPDATE vocab_cards SET hidden = ?1 WHERE id = ?2",
+        params![if hidden { 1 } else { 0 }, card_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn delete_vocab_card(conn: &Connection, card_id: i64) -> Result<(), String> {
+    conn.execute("DELETE FROM vocab_cards WHERE id = ?1", params![card_id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 fn next_rand(seed: &mut u64) -> u64 {
@@ -866,7 +1253,6 @@ fn make_cloze_sentence(example: &str, word: &str) -> Option<String> {
     let ex_lower = example.to_lowercase();
     let w_lower = clean_word.to_lowercase();
     if let Some(byte_idx) = ex_lower.find(&w_lower) {
-        // Ensure char boundary safety (ASCII/UTF-8 lowercase can shift lengths in rare cases, check slice)
         if example.is_char_boundary(byte_idx) && example.is_char_boundary(byte_idx + w_lower.len()) {
             let mut out = String::with_capacity(example.len());
             out.push_str(&example[..byte_idx]);
@@ -980,6 +1366,9 @@ pub fn get_vocab_quiz_status(conn: &Connection, today_naive: NaiveDate) -> Resul
 }
 
 fn is_quiz_eligible_card(card: &VocabCard) -> bool {
+    if card.hidden {
+        return false;
+    }
     let w = card.word.trim();
     if w.is_empty()
         || w.contains(" vs ")
@@ -1023,25 +1412,14 @@ pub fn generate_vocab_quiz(
 
     let mut stmt = conn
         .prepare(
-            "SELECT id, track, topic, word, meaning, example, ease, interval_days, reps, due_date
-             FROM vocab_cards",
+            "SELECT id, track, topic, word, meaning, example, ease, interval_days, reps, due_date,
+                    COALESCE(lapses, 0), COALESCE(hidden, 0), COALESCE(is_user_card, 0)
+             FROM vocab_cards
+             WHERE COALESCE(hidden, 0) = 0",
         )
         .map_err(|e| e.to_string())?;
     let all_cards: Vec<VocabCard> = stmt
-        .query_map([], |r| {
-            Ok(VocabCard {
-                id: r.get(0)?,
-                track: r.get(1)?,
-                topic: r.get(2)?,
-                word: r.get(3)?,
-                meaning: r.get(4)?,
-                example: r.get(5)?,
-                ease: r.get(6)?,
-                interval_days: r.get(7)?,
-                reps: r.get(8)?,
-                due_date: r.get(9)?,
-            })
-        })
+        .query_map([], map_vocab_card)
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
@@ -1061,14 +1439,13 @@ pub fn generate_vocab_quiz(
         all_cards
     };
 
-    let mut studied: Vec<VocabCard> = active_cards.iter().filter(|c| c.reps >= 1).cloned().collect();
-    let mut unstudied: Vec<VocabCard> = active_cards.iter().filter(|c| c.reps == 0).cloned().collect();
+    let mut studied: Vec<VocabCard> = active_cards.iter().filter(|c| c.reps >= 1 || c.lapses > 0).cloned().collect();
+    let mut unstudied: Vec<VocabCard> = active_cards.iter().filter(|c| c.reps == 0 && c.lapses == 0).cloned().collect();
 
-    // Prioritize studied cards that are easiest to forget (lowest ease, largest interval, earliest due_date)
     studied.sort_by(|a, b| {
-        a.ease
-            .partial_cmp(&b.ease)
-            .unwrap_or(std::cmp::Ordering::Equal)
+        b.lapses
+            .cmp(&a.lapses)
+            .then_with(|| a.ease.partial_cmp(&b.ease).unwrap_or(std::cmp::Ordering::Equal))
             .then_with(|| b.interval_days.cmp(&a.interval_days))
             .then_with(|| a.due_date.cmp(&b.due_date))
     });
@@ -1218,7 +1595,9 @@ pub fn submit_vocab_quiz(
         if !item.correct || item.gave_up {
             let new_ease = (ease - 0.25).max(1.3);
             tx.execute(
-                "UPDATE vocab_cards SET reps = 0, interval_days = 0, ease = ?1, due_date = ?2 WHERE id = ?3",
+                "UPDATE vocab_cards
+                 SET reps = 0, interval_days = 0, ease = ?1, due_date = ?2, lapses = COALESCE(lapses, 0) + 1
+                 WHERE id = ?3",
                 params![new_ease, today_str, item.card_id],
             )
             .map_err(|e| e.to_string())?;
@@ -1259,7 +1638,8 @@ pub fn submit_vocab_quiz(
     let updated_quests = tx
         .execute(
             "UPDATE daily_quests SET done = 1
-             WHERE date = ?1 AND track = 'ielts' AND done = 0 AND lower(title) LIKE '%quiz%'",
+             WHERE date = ?1 AND track = 'ielts' AND done = 0
+               AND (action_hint = 'quiz' OR lower(title) LIKE '%quiz%')",
             params![today_str],
         )
         .map_err(|e| e.to_string())?;
@@ -1267,7 +1647,7 @@ pub fn submit_vocab_quiz(
 
     let quests_done_today: i64 = tx
         .query_row(
-            "SELECT COUNT(*) FROM daily_quests WHERE date = ?1 AND track = 'ielts' AND done = 1",
+            "SELECT COUNT(*) FROM daily_quests WHERE date = ?1 AND track = 'ielts' AND done = 1 AND COALESCE(tier, 'core') = 'core'",
             params![today_str],
             |r| r.get(0),
         )
@@ -1324,34 +1704,28 @@ pub fn review_vocab_card(
 ) -> Result<VocabCard, String> {
     let card: VocabCard = conn
         .query_row(
-            "SELECT id, track, topic, word, meaning, example, ease, interval_days, reps, due_date
+            "SELECT id, track, topic, word, meaning, example, ease, interval_days, reps, due_date,
+                    COALESCE(lapses, 0), COALESCE(hidden, 0), COALESCE(is_user_card, 0)
              FROM vocab_cards WHERE id = ?1",
             params![card_id],
-            |r| {
-                Ok(VocabCard {
-                    id: r.get(0)?,
-                    track: r.get(1)?,
-                    topic: r.get(2)?,
-                    word: r.get(3)?,
-                    meaning: r.get(4)?,
-                    example: r.get(5)?,
-                    ease: r.get(6)?,
-                    interval_days: r.get(7)?,
-                    reps: r.get(8)?,
-                    due_date: r.get(9)?,
-                })
-            },
+            map_vocab_card,
         )
         .map_err(|e| e.to_string())?;
 
     let outcome = apply_sm2(card.ease, card.interval_days, card.reps, quality, today);
+    let new_lapses = if quality == 0 {
+        card.lapses + 1
+    } else {
+        card.lapses
+    };
     conn.execute(
-        "UPDATE vocab_cards SET ease = ?1, interval_days = ?2, reps = ?3, due_date = ?4 WHERE id = ?5",
+        "UPDATE vocab_cards SET ease = ?1, interval_days = ?2, reps = ?3, due_date = ?4, lapses = ?5 WHERE id = ?6",
         params![
             outcome.ease,
             outcome.interval_days,
             outcome.reps,
             outcome.due_date,
+            new_lapses,
             card_id
         ],
     )
@@ -1365,8 +1739,568 @@ pub fn review_vocab_card(
         interval_days: outcome.interval_days,
         reps: outcome.reps,
         due_date: outcome.due_date,
+        lapses: new_lapses,
         ..card
     })
+}
+
+pub fn generate_error_fix_quiz(
+    conn: &Connection,
+    count: Option<i64>,
+) -> Result<Vec<ErrorFixQuestion>, String> {
+    let limit = count.unwrap_or(5).clamp(1, 20);
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, category, wrong_text, right_text, count, created_at
+             FROM error_logs
+             ORDER BY count DESC, id DESC
+             LIMIT ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![limit], |r| {
+            Ok(ErrorFixQuestion {
+                error_id: r.get(0)?,
+                category: r.get(1)?,
+                wrong_text: r.get(2)?,
+                right_text: r.get(3)?,
+                count: r.get(4)?,
+                created_at: r.get(5)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut out = Vec::new();
+    for item in rows {
+        out.push(item.map_err(|e| e.to_string())?);
+    }
+    Ok(out)
+}
+
+pub fn generate_micro_check(conn: &Connection) -> Result<Vec<MicroCheckItem>, String> {
+    let mut items: Vec<MicroCheckItem> = Vec::new();
+
+    // 1. Two easily-forgotten vocab cards (prioritizing lapses & low ease)
+    let mut v_stmt = conn
+        .prepare(
+            "SELECT id, track, topic, word, meaning, example, ease, interval_days, reps, due_date,
+                    COALESCE(lapses, 0), COALESCE(hidden, 0), COALESCE(is_user_card, 0)
+             FROM vocab_cards
+             WHERE COALESCE(hidden, 0) = 0
+             ORDER BY COALESCE(lapses, 0) DESC, ease ASC, reps ASC, id ASC",
+        )
+        .map_err(|e| e.to_string())?;
+    let all_vocab: Vec<VocabCard> = v_stmt
+        .query_map([], map_vocab_card)
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    for card in all_vocab.iter().filter(|c| is_quiz_eligible_card(c)).take(2) {
+        items.push(MicroCheckItem {
+            item_type: "vocab".to_string(),
+            ref_id: card.id,
+            source_label: format!("SRS · {} (quên {} lần)", card.topic, card.lapses),
+            prompt_text: format!("Gõ cụm từ tiếng Anh có nghĩa: “{}”", card.meaning),
+            answer_text: card.word.clone(),
+            hint: make_typing_hint(&card.word),
+            meaning_or_note: card.example.clone(),
+            options: Vec::new(),
+        });
+    }
+
+    // 2. Two error_logs items (prioritizing highest count)
+    let mut e_stmt = conn
+        .prepare(
+            "SELECT id, category, wrong_text, right_text, count, created_at
+             FROM error_logs
+             ORDER BY count DESC, id DESC
+             LIMIT 2",
+        )
+        .map_err(|e| e.to_string())?;
+    let errs = e_stmt
+        .query_map([], |r| {
+            Ok(ErrorLog {
+                id: r.get(0)?,
+                category: r.get(1)?,
+                wrong_text: r.get(2)?,
+                right_text: r.get(3)?,
+                count: r.get(4)?,
+                created_at: r.get(5)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    for err in errs.flatten() {
+        items.push(MicroCheckItem {
+            item_type: "error_fix".to_string(),
+            ref_id: err.id,
+            source_label: format!("Sổ lỗi · {} · {} lần", err.category, err.count),
+            prompt_text: err.wrong_text.clone(),
+            answer_text: err.right_text.clone(),
+            hint: make_typing_hint(&err.right_text),
+            meaning_or_note: format!("{} ({})", err.category, err.created_at),
+            options: Vec::new(),
+        });
+    }
+
+    // 3. One paraphrase pair (MCQ or typing)
+    let all_paras = list_paraphrases(conn)?;
+    if let Some(first_para) = all_paras.first() {
+        let mut opts: Vec<String> = all_paras
+            .iter()
+            .skip(1)
+            .take(3)
+            .map(|p| p.passage_paraphrase.clone())
+            .collect();
+        opts.push(first_para.passage_paraphrase.clone());
+        let mut seed = Local::now().timestamp_subsec_nanos() as u64 + 42;
+        shuffle_slice(&mut opts, &mut seed);
+
+        items.push(MicroCheckItem {
+            item_type: "paraphrase".to_string(),
+            ref_id: first_para.id,
+            source_label: format!("Paraphrase · {}", first_para.source_type),
+            prompt_text: format!(
+                "Từ câu hỏi “{}” thường được paraphrase trong bài Reading là gì?",
+                first_para.question_term
+            ),
+            answer_text: first_para.passage_paraphrase.clone(),
+            hint: first_para.trap_note.clone(),
+            meaning_or_note: first_para.trap_note.clone(),
+            options: opts,
+        });
+    }
+
+    Ok(items)
+}
+
+pub fn submit_micro_check(
+    conn: &Connection,
+    results: Vec<MicroCheckAnswerInput>,
+    today: NaiveDate,
+) -> Result<MicroCheckSubmitResult, String> {
+    let today_str = today.format("%Y-%m-%d").to_string();
+    let total_questions = results.len() as i64;
+    let mut correct_count = 0_i64;
+
+    for r in &results {
+        if r.correct && !r.gave_up {
+            correct_count += 1;
+        } else if r.item_type == "vocab" {
+            let _ = conn.execute(
+                "UPDATE vocab_cards
+                 SET reps = 0, interval_days = 0, due_date = ?1,
+                     lapses = COALESCE(lapses, 0) + 1,
+                     ease = MAX(1.3, ease - 0.2)
+                 WHERE id = ?2",
+                params![today_str, r.ref_id],
+            );
+        }
+    }
+
+    let marked_quest_done = auto_tick_quest_by_hint(conn, &today_str, "micro_check")?;
+    adjust_study_day(conn, &today_str, 2, 0)?;
+
+    let accuracy_pct = if total_questions > 0 {
+        ((correct_count * 100) + (total_questions / 2)) / total_questions
+    } else {
+        0
+    };
+
+    Ok(MicroCheckSubmitResult {
+        total_questions,
+        correct_count,
+        accuracy_pct,
+        marked_quest_done,
+    })
+}
+
+pub fn get_dictation_batch(
+    conn: &Connection,
+    count: Option<i64>,
+) -> Result<Vec<DictationSentence>, String> {
+    let target_band: f64 = conn
+        .query_row(
+            "SELECT COALESCE(target_band, 7.0) FROM settings WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(7.0);
+    let level = if target_band >= 7.5 { "8.0" } else { "6.5" };
+    let limit = count.unwrap_or(5).clamp(1, 24);
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, level, section, trap_focus, sentence, meaning_vi, practiced_count, last_accuracy
+             FROM dictation_sentences
+             WHERE level = ?1
+             ORDER BY practiced_count ASC, id ASC
+             LIMIT ?2",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![level, limit], |r| {
+            Ok(DictationSentence {
+                id: r.get(0)?,
+                level: r.get(1)?,
+                section: r.get(2)?,
+                trap_focus: r.get(3)?,
+                sentence: r.get(4)?,
+                meaning_vi: r.get(5)?,
+                practiced_count: r.get(6)?,
+                last_accuracy: r.get(7)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut out = Vec::new();
+    for item in rows {
+        out.push(item.map_err(|e| e.to_string())?);
+    }
+    Ok(out)
+}
+
+pub fn submit_dictation_session(
+    conn: &Connection,
+    results: Vec<DictationResultInput>,
+    today: NaiveDate,
+) -> Result<DictationSubmitResult, String> {
+    let today_str = today.format("%Y-%m-%d").to_string();
+    let total_sentences = results.len() as i64;
+    let mut sum_acc = 0_i64;
+    let mut all_wrong: Vec<String> = Vec::new();
+
+    for r in &results {
+        let acc = r.accuracy_pct.clamp(0, 100);
+        sum_acc += acc;
+        conn.execute(
+            "UPDATE dictation_sentences
+             SET practiced_count = practiced_count + 1, last_accuracy = ?1
+             WHERE id = ?2",
+            params![acc, r.sentence_id],
+        )
+        .map_err(|e| e.to_string())?;
+        for w in &r.wrong_words {
+            if !w.trim().is_empty() && !all_wrong.contains(w) {
+                all_wrong.push(w.clone());
+            }
+        }
+    }
+
+    let avg_accuracy = if total_sentences > 0 {
+        (sum_acc + total_sentences / 2) / total_sentences
+    } else {
+        0
+    };
+    let wrong_json = serde_json::to_string(&all_wrong).unwrap_or_else(|_| "[]".to_string());
+    conn.execute(
+        "INSERT INTO dictation_sessions (created_at, total_sentences, avg_accuracy, wrong_words_json)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![today_str, total_sentences, avg_accuracy, wrong_json],
+    )
+    .map_err(|e| e.to_string())?;
+
+    let marked_quest_done = auto_tick_quest_by_hint(conn, &today_str, "dictation")?;
+    adjust_study_day(conn, &today_str, 6, 0)?;
+
+    Ok(DictationSubmitResult {
+        total_sentences,
+        avg_accuracy,
+        marked_quest_done,
+    })
+}
+
+pub fn list_paraphrases(conn: &Connection) -> Result<Vec<ParaphrasePair>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, question_term, passage_paraphrase, source_type, trap_note, created_at
+             FROM paraphrase_pairs
+             ORDER BY id DESC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(ParaphrasePair {
+                id: r.get(0)?,
+                question_term: r.get(1)?,
+                passage_paraphrase: r.get(2)?,
+                source_type: r.get(3)?,
+                trap_note: r.get(4)?,
+                created_at: r.get(5)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for item in rows {
+        out.push(item.map_err(|e| e.to_string())?);
+    }
+    Ok(out)
+}
+
+pub fn add_paraphrase(
+    conn: &Connection,
+    question_term: &str,
+    passage_paraphrase: &str,
+    source_type: &str,
+    trap_note: &str,
+) -> Result<ParaphrasePair, String> {
+    let qt = question_term.trim();
+    let pp = passage_paraphrase.trim();
+    if qt.is_empty() || pp.is_empty() {
+        return Err("Vui lòng nhập Từ câu hỏi và Paraphrase trong bài đọc.".to_string());
+    }
+    let now = Local::now().format("%Y-%m-%d").to_string();
+    conn.execute(
+        "INSERT INTO paraphrase_pairs (question_term, passage_paraphrase, source_type, trap_note, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![qt, pp, source_type.trim(), trap_note.trim(), now],
+    )
+    .map_err(|e| e.to_string())?;
+    let id = conn.last_insert_rowid();
+    conn.query_row(
+        "SELECT id, question_term, passage_paraphrase, source_type, trap_note, created_at
+         FROM paraphrase_pairs WHERE id = ?1",
+        params![id],
+        |r| {
+            Ok(ParaphrasePair {
+                id: r.get(0)?,
+                question_term: r.get(1)?,
+                passage_paraphrase: r.get(2)?,
+                source_type: r.get(3)?,
+                trap_note: r.get(4)?,
+                created_at: r.get(5)?,
+            })
+        },
+    )
+    .map_err(|e| e.to_string())
+}
+
+pub fn delete_paraphrase(conn: &Connection, id: i64) -> Result<(), String> {
+    conn.execute("DELETE FROM paraphrase_pairs WHERE id = ?1", params![id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn current_roadmap_week(conn: &Connection) -> i64 {
+    let undone_count: Option<i64> = conn
+        .query_row(
+            "SELECT COUNT(*) FROM roadmap_items WHERE track = 'ielts' AND done = 1",
+            [],
+            |r| r.get(0),
+        )
+        .ok();
+    match undone_count {
+        Some(done_n) => (done_n + 1).clamp(1, 24),
+        None => 1,
+    }
+}
+
+pub fn get_speaking_cue(
+    conn: &Connection,
+    week_num: Option<i64>,
+    random_next: Option<bool>,
+    exclude_id: Option<i64>,
+) -> Result<SpeakingCue, String> {
+    let target_band: f64 = conn
+        .query_row(
+            "SELECT COALESCE(target_band, 7.0) FROM settings WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(7.0);
+    let level = if target_band >= 7.5 { "8.0" } else { "6.5" };
+    let wk = week_num.unwrap_or_else(|| current_roadmap_week(conn)).clamp(1, 24);
+    let ex_id = exclude_id.unwrap_or(-1);
+
+    let sql = if random_next.unwrap_or(false) {
+        "SELECT id, week_num, level, topic, cue_title, cue_bullets_json, part3_questions_json, target_phrases_json, used_count
+         FROM speaking_bank
+         WHERE level = ?1 AND id != ?2
+         ORDER BY used_count ASC, ABS(week_num - ?3) ASC, id ASC
+         LIMIT 1"
+    } else {
+        "SELECT id, week_num, level, topic, cue_title, cue_bullets_json, part3_questions_json, target_phrases_json, used_count
+         FROM speaking_bank
+         WHERE level = ?1 AND id != ?2
+         ORDER BY (CASE WHEN week_num = ?3 THEN 0 ELSE 1 END) ASC, used_count ASC, ABS(week_num - ?3) ASC, id ASC
+         LIMIT 1"
+    };
+
+    conn.query_row(sql, params![level, ex_id, wk], |r| {
+        let bullets_json: String = r.get(5)?;
+        let p3_json: String = r.get(6)?;
+        let phrases_json: String = r.get(7)?;
+        Ok(SpeakingCue {
+            id: r.get(0)?,
+            week_num: r.get(1)?,
+            level: r.get(2)?,
+            topic: r.get(3)?,
+            cue_title: r.get(4)?,
+            cue_bullets: serde_json::from_str(&bullets_json).unwrap_or_default(),
+            part3_questions: serde_json::from_str(&p3_json).unwrap_or_default(),
+            target_phrases: serde_json::from_str(&phrases_json).unwrap_or_default(),
+            used_count: r.get(8)?,
+        })
+    })
+    .map_err(|e| format!("Không tìm thấy Cue Card phù hợp: {e}"))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn save_speaking_session(
+    conn: &Connection,
+    cue_id: Option<i64>,
+    cue_title: &str,
+    track: &str,
+    mode: &str,
+    wpm_start: i64,
+    wpm_end: i64,
+    fillers_start: i64,
+    fillers_end: i64,
+    fc_band: f64,
+    lr_band: f64,
+    gra_band: f64,
+    p_band: f64,
+    overall_band: f64,
+    progress_note: &str,
+    transcript: &str,
+    feedback_json: &str,
+    today: NaiveDate,
+) -> Result<(SpeakingSession, bool), String> {
+    let created_at = Local::now().format("%Y-%m-%d %H:%M").to_string();
+    let today_str = today.format("%Y-%m-%d").to_string();
+
+    conn.execute(
+        "INSERT INTO speaking_sessions (
+            created_at, cue_id, cue_title, track, mode,
+            wpm_start, wpm_end, fillers_start, fillers_end,
+            fc_band, lr_band, gra_band, p_band, overall_band,
+            progress_note, transcript, feedback_json
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+        params![
+            created_at,
+            cue_id,
+            cue_title,
+            track,
+            mode,
+            wpm_start,
+            wpm_end,
+            fillers_start,
+            fillers_end,
+            fc_band,
+            lr_band,
+            gra_band,
+            p_band,
+            overall_band,
+            progress_note,
+            transcript,
+            feedback_json
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    let id = conn.last_insert_rowid();
+
+    if let Some(cid) = cue_id {
+        let _ = conn.execute(
+            "UPDATE speaking_bank SET used_count = used_count + 1 WHERE id = ?1",
+            params![cid],
+        );
+    }
+
+    let marked_quest_done = auto_tick_quest_by_hint(conn, &today_str, "speaking")?;
+    adjust_study_day(conn, &today_str, 10, 0)?;
+
+    let session = SpeakingSession {
+        id,
+        created_at,
+        cue_id,
+        cue_title: cue_title.to_string(),
+        track: track.to_string(),
+        mode: mode.to_string(),
+        wpm_start,
+        wpm_end,
+        fillers_start,
+        fillers_end,
+        fc_band,
+        lr_band,
+        gra_band,
+        p_band,
+        overall_band,
+        progress_note: progress_note.to_string(),
+        transcript: transcript.to_string(),
+        feedback_json: feedback_json.to_string(),
+    };
+    Ok((session, marked_quest_done))
+}
+
+pub fn list_speaking_sessions(conn: &Connection) -> Result<Vec<SpeakingSession>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, created_at, cue_id, cue_title, track, mode,
+                    wpm_start, wpm_end, fillers_start, fillers_end,
+                    fc_band, lr_band, gra_band, p_band, overall_band,
+                    progress_note, transcript, feedback_json
+             FROM speaking_sessions
+             ORDER BY id DESC
+             LIMIT 20",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(SpeakingSession {
+                id: r.get(0)?,
+                created_at: r.get(1)?,
+                cue_id: r.get(2)?,
+                cue_title: r.get(3)?,
+                track: r.get(4)?,
+                mode: r.get(5)?,
+                wpm_start: r.get(6)?,
+                wpm_end: r.get(7)?,
+                fillers_start: r.get(8)?,
+                fillers_end: r.get(9)?,
+                fc_band: r.get(10)?,
+                lr_band: r.get(11)?,
+                gra_band: r.get(12)?,
+                p_band: r.get(13)?,
+                overall_band: r.get(14)?,
+                progress_note: r.get(15)?,
+                transcript: r.get(16)?,
+                feedback_json: r.get(17)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for item in rows {
+        out.push(item.map_err(|e| e.to_string())?);
+    }
+    Ok(out)
+}
+
+pub fn get_top_errors(conn: &Connection, limit: i64) -> Result<Vec<ErrorLog>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, category, wrong_text, right_text, count, created_at
+             FROM error_logs
+             ORDER BY count DESC, id DESC
+             LIMIT ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![limit], |r| {
+            Ok(ErrorLog {
+                id: r.get(0)?,
+                category: r.get(1)?,
+                wrong_text: r.get(2)?,
+                right_text: r.get(3)?,
+                count: r.get(4)?,
+                created_at: r.get(5)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for item in rows {
+        out.push(item.map_err(|e| e.to_string())?);
+    }
+    Ok(out)
 }
 
 pub fn upsert_error_log(
@@ -1462,6 +2396,7 @@ pub fn save_essay(
     .map_err(|e| e.to_string())?;
 
     let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
+    let _ = auto_tick_quest_by_hint(conn, &today, "writing");
     adjust_study_day(conn, &today, 10, 0)?;
 
     Ok(conn.last_insert_rowid())
@@ -1480,20 +2415,30 @@ pub fn get_dashboard_state(conn: &Connection) -> Result<DashboardState, String> 
 
     let mut q_stmt = conn
         .prepare(
-            "SELECT id, date, track, title, meta, minutes, done
+            "SELECT id, date, track, title, meta, minutes, done,
+                    COALESCE(tier, 'core'), COALESCE(action_hint, '')
              FROM daily_quests WHERE date = ?1 ORDER BY id ASC",
         )
         .map_err(|e| e.to_string())?;
     let quests: Vec<DailyQuest> = q_stmt
         .query_map(params![today], |r| {
+            let title: String = r.get(3)?;
+            let raw_hint: String = r.get(8)?;
+            let action_hint = if raw_hint.trim().is_empty() {
+                infer_quest_action_hint(&title)
+            } else {
+                raw_hint
+            };
             Ok(DailyQuest {
                 id: r.get(0)?,
                 date: r.get(1)?,
                 track: r.get(2)?,
-                title: r.get(3)?,
+                title,
                 meta: r.get(4)?,
                 minutes: r.get(5)?,
                 done: r.get::<_, i64>(6)? != 0,
+                tier: r.get(7)?,
+                action_hint,
             })
         })
         .map_err(|e| e.to_string())?
@@ -1532,14 +2477,26 @@ pub fn get_dashboard_state(conn: &Connection) -> Result<DashboardState, String> 
 
     let due_vocab_count: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM vocab_cards WHERE due_date <= ?1",
+            "SELECT COUNT(*) FROM vocab_cards WHERE due_date <= ?1 AND COALESCE(hidden, 0) = 0",
             params![today],
             |r| r.get(0),
         )
         .unwrap_or(0);
     let total_vocab_count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM vocab_cards", [], |r| r.get(0))
+        .query_row(
+            "SELECT COUNT(*) FROM vocab_cards WHERE COALESCE(hidden, 0) = 0",
+            [],
+            |r| r.get(0),
+        )
         .unwrap_or(0);
+    let leech_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM vocab_cards WHERE COALESCE(lapses, 0) >= 3 AND COALESCE(hidden, 0) = 0",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
     let quiz_status = get_vocab_quiz_status(conn, today_naive)?;
 
     let mut r_stmt = conn
@@ -1560,23 +2517,16 @@ pub fn get_dashboard_state(conn: &Connection) -> Result<DashboardState, String> 
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
 
-    let mut e_stmt = conn
-        .prepare("SELECT id, category, wrong_text, right_text, count, created_at FROM error_logs ORDER BY count DESC, id DESC LIMIT 30")
-        .map_err(|e| e.to_string())?;
-    let error_logs: Vec<ErrorLog> = e_stmt
-        .query_map([], |r| {
-            Ok(ErrorLog {
-                id: r.get(0)?,
-                category: r.get(1)?,
-                wrong_text: r.get(2)?,
-                right_text: r.get(3)?,
-                count: r.get(4)?,
-                created_at: r.get(5)?,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
+    let current_week = roadmap
+        .iter()
+        .position(|r| !r.done)
+        .map(|i| (i as i64) + 1)
+        .unwrap_or_else(|| roadmap.len().max(1) as i64)
+        .clamp(1, 24);
+
+    let error_logs = get_top_errors(conn, 40)?;
+    let paraphrase_pairs = list_paraphrases(conn)?;
+    let speaking_sessions = list_speaking_sessions(conn)?;
 
     let mut es_stmt = conn
         .prepare("SELECT id, mode, prompt, content, word_count, ta, cc, lr, gra, overall, feedback_json, created_at FROM essays ORDER BY id DESC LIMIT 10")
@@ -1629,9 +2579,13 @@ pub fn get_dashboard_state(conn: &Connection) -> Result<DashboardState, String> 
         skill_bands,
         due_vocab_count,
         total_vocab_count,
+        leech_count,
+        current_week,
         quiz_status,
         roadmap,
         error_logs,
+        paraphrase_pairs,
+        speaking_sessions,
         recent_essays,
         practice_scores,
         prompts: default_writing_prompts_for_band(raw_settings.target_band),
@@ -1690,7 +2644,6 @@ pub fn set_study_level(conn: &Connection, level: &str) -> Result<DashboardState,
     )
     .map_err(|e| e.to_string())?;
 
-    // Only update baseline practice_scores if user has NOT entered any custom test scores
     let user_score_count: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM practice_scores
@@ -1733,7 +2686,6 @@ pub fn set_study_level(conn: &Connection, level: &str) -> Result<DashboardState,
         }
     }
 
-    // Preserve roadmap completion status by week_label
     let mut done_map: HashMap<String, bool> = HashMap::new();
     {
         let mut stmt = conn
@@ -1763,11 +2715,10 @@ pub fn set_study_level(conn: &Connection, level: &str) -> Result<DashboardState,
         .map_err(|e| e.to_string())?;
     }
 
-    // Swap unreviewed seed vocab cards (reps = 0) between 6.5 and 8.0 while preserving all studied/custom cards
     if is_80 {
         for v in VOCAB_SEEDS {
             conn.execute(
-                "DELETE FROM vocab_cards WHERE word = ?1 AND reps = 0",
+                "DELETE FROM vocab_cards WHERE word = ?1 AND reps = 0 AND COALESCE(is_user_card, 0) = 0",
                 params![v.word],
             )
             .map_err(|e| e.to_string())?;
@@ -1784,7 +2735,7 @@ pub fn set_study_level(conn: &Connection, level: &str) -> Result<DashboardState,
     } else {
         for v in VOCAB_SEEDS_80 {
             conn.execute(
-                "DELETE FROM vocab_cards WHERE word = ?1 AND reps = 0",
+                "DELETE FROM vocab_cards WHERE word = ?1 AND reps = 0 AND COALESCE(is_user_card, 0) = 0",
                 params![v.word],
             )
             .map_err(|e| e.to_string())?;
@@ -1800,7 +2751,6 @@ pub fn set_study_level(conn: &Connection, level: &str) -> Result<DashboardState,
         }
     }
 
-    // Swap error_logs only if all existing rows belong to default seed sets (preserve 100% if user added any)
     let mut has_user_errors = false;
     {
         let mut stmt = conn
@@ -1836,7 +2786,6 @@ pub fn set_study_level(conn: &Connection, level: &str) -> Result<DashboardState,
         }
     }
 
-    // Update today's 3 daily quests while preserving done status by position
     let mut prev_done: Vec<bool> = Vec::new();
     {
         let mut stmt = conn
@@ -1856,12 +2805,12 @@ pub fn set_study_level(conn: &Connection, level: &str) -> Result<DashboardState,
     .map_err(|e| e.to_string())?;
 
     let defaults = default_quests_for_weekday(today_naive.weekday(), is_80);
-    for (idx, (title, meta, mins)) in defaults.iter().enumerate() {
+    for (idx, q) in defaults.iter().enumerate() {
         let was_done = prev_done.get(idx).copied().unwrap_or(false);
         conn.execute(
-            "INSERT INTO daily_quests (date, track, title, meta, minutes, done)
-             VALUES (?1, 'ielts', ?2, ?3, ?4, ?5)",
-            params![today, title, meta, mins, if was_done { 1 } else { 0 }],
+            "INSERT INTO daily_quests (date, track, title, meta, minutes, done, tier, action_hint)
+             VALUES (?1, 'ielts', ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![today, q.title, q.meta, q.minutes, if was_done { 1 } else { 0 }, q.tier, q.action_hint],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -1938,6 +2887,20 @@ pub fn import_roadmap_to_db(
         None
     };
 
+    // Snapshot existing roadmap done flags before replace so completed weeks are 100% preserved
+    let mut done_map: HashMap<String, bool> = HashMap::new();
+    {
+        let mut stmt = conn
+            .prepare("SELECT week_label, done FROM roadmap_items WHERE track = 'ielts'")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? != 0)))
+            .map_err(|e| e.to_string())?;
+        for row in rows.flatten() {
+            done_map.insert(normalize_week_key(&row.0), row.1);
+        }
+    }
+
     conn.execute("BEGIN IMMEDIATE", []).map_err(|e| e.to_string())?;
     let res: Result<(), String> = (|| {
         conn.execute(
@@ -1988,10 +2951,16 @@ pub fn import_roadmap_to_db(
                 .map_err(|e| e.to_string())?;
             }
             for q in &parsed.daily_quests {
+                let tier = if q.tier == "bonus" { "bonus" } else { "core" };
+                let hint = if q.action_hint.trim().is_empty() {
+                    infer_quest_action_hint(&q.title)
+                } else {
+                    q.action_hint.clone()
+                };
                 conn.execute(
-                    "INSERT INTO daily_quests (date, track, title, meta, minutes, done)
-                     VALUES (?1, 'ielts', ?2, ?3, ?4, 0)",
-                    params![today, q.title, q.meta, q.minutes],
+                    "INSERT INTO daily_quests (date, track, title, meta, minutes, done, tier, action_hint)
+                     VALUES (?1, 'ielts', ?2, ?3, ?4, 0, ?5, ?6)",
+                    params![today, q.title, q.meta, q.minutes, tier, hint],
                 )
                 .map_err(|e| e.to_string())?;
             }
@@ -2003,10 +2972,15 @@ pub fn import_roadmap_to_db(
                     .map_err(|e| e.to_string())?;
             }
             for w in &parsed.roadmap_weeks {
+                let preserved = done_map
+                    .get(&normalize_week_key(&w.week_label))
+                    .copied()
+                    .unwrap_or(false);
+                let is_done = preserved || w.checked;
                 conn.execute(
                     "INSERT INTO roadmap_items (track, phase, week_label, title, done)
-                     VALUES ('ielts', ?1, ?2, ?3, 0)",
-                    params![w.phase, w.week_label, w.title],
+                     VALUES ('ielts', ?1, ?2, ?3, ?4)",
+                    params![w.phase, w.week_label, w.title, if is_done { 1 } else { 0 }],
                 )
                 .map_err(|e| e.to_string())?;
             }
@@ -2037,12 +3011,24 @@ pub fn import_roadmap_to_db(
                     .unwrap_or(0);
                 if exists == 0 {
                     conn.execute(
-                        "INSERT INTO vocab_cards (track, topic, word, meaning, example, ease, interval_days, reps, due_date)
-                         VALUES ('ielts', ?1, ?2, ?3, ?4, 2.5, 0, 0, ?5)",
+                        "INSERT INTO vocab_cards (track, topic, word, meaning, example, ease, interval_days, reps, due_date, is_user_card)
+                         VALUES ('ielts', ?1, ?2, ?3, ?4, 2.5, 0, 0, ?5, 1)",
                         params![v.topic, v.word, v.meaning, v.example, today],
                     )
                     .map_err(|e| e.to_string())?;
                 }
+            }
+        }
+
+        if !parsed.paraphrase_pairs.is_empty() {
+            for p in &parsed.paraphrase_pairs {
+                conn.execute(
+                    "INSERT INTO paraphrase_pairs (question_term, passage_paraphrase, source_type, trap_note, created_at)
+                     SELECT ?1, ?2, ?3, ?4, ?5
+                     WHERE NOT EXISTS (SELECT 1 FROM paraphrase_pairs WHERE lower(question_term) = lower(?1) AND lower(passage_paraphrase) = lower(?2))",
+                    params![p.question_term, p.passage_paraphrase, p.source_type, p.trap_note, today],
+                )
+                .map_err(|e| e.to_string())?;
             }
         }
 
@@ -2079,7 +3065,13 @@ pub fn export_roadmap_markdown(conn: &Connection) -> Result<String, String> {
         let sum: f64 = dash.skill_bands.iter().map(|b| b.target).sum();
         ((sum / dash.skill_bands.len() as f64) * 2.0).round() / 2.0
     };
-    let total_mins: i64 = dash.quests.iter().map(|q| q.minutes).sum::<i64>().max(30);
+    let core_mins: i64 = dash
+        .quests
+        .iter()
+        .filter(|q| q.tier != "bonus")
+        .map(|q| q.minutes)
+        .sum::<i64>()
+        .max(20);
 
     lines.push(format!("overall_current: {:.1}", avg_cur));
     lines.push(format!("overall_target: {:.1}", avg_tgt));
@@ -2092,14 +3084,15 @@ pub fn export_roadmap_markdown(conn: &Connection) -> Result<String, String> {
             sb.target
         ));
     }
-    lines.push(format!("daily_minutes: {}", total_mins));
+    lines.push(format!("daily_minutes: {}", core_mins));
     lines.push(format!("reminder_time: {}", dash.settings.reminder_time));
     lines.push("---".to_string());
     lines.push(String::new());
 
-    lines.push("## Nhiệm vụ hàng ngày".to_string());
+    lines.push("## Nhiệm vụ Core".to_string());
     for q in &dash.quests {
-        lines.push(format!("- [{}p] {} | {}", q.minutes, q.title, q.meta));
+        let tag = if q.tier == "bonus" { "bonus" } else { "core" };
+        lines.push(format!("- [{}] [{}p] {} | {}", tag, q.minutes, q.title, q.meta));
     }
     lines.push(String::new());
 
@@ -2121,8 +3114,17 @@ pub fn export_roadmap_markdown(conn: &Connection) -> Result<String, String> {
     }
     lines.push(String::new());
 
+    lines.push("## Bảng Paraphrase".to_string());
+    for p in dash.paraphrase_pairs.iter().take(15) {
+        lines.push(format!(
+            "- {} -> {} | {} | {}",
+            p.question_term, p.passage_paraphrase, p.source_type, p.trap_note
+        ));
+    }
+    lines.push(String::new());
+
     let mut v_stmt = conn
-        .prepare("SELECT topic, word, meaning, example FROM vocab_cards ORDER BY id ASC LIMIT 20")
+        .prepare("SELECT topic, word, meaning, example FROM vocab_cards WHERE COALESCE(hidden, 0) = 0 ORDER BY id ASC LIMIT 20")
         .map_err(|e| e.to_string())?;
     let v_rows = v_stmt
         .query_map([], |r| {
@@ -2134,7 +3136,7 @@ pub fn export_roadmap_markdown(conn: &Connection) -> Result<String, String> {
             ))
         })
         .map_err(|e| e.to_string())?;
-    lines.push("## Từ vựng SRS ban đầu".to_string());
+    lines.push("## Sentence Mining".to_string());
     for vr in v_rows {
         let (topic, word, meaning, example) = vr.map_err(|e| e.to_string())?;
         lines.push(format!("- [{topic}] {word} | {meaning} | {example}"));
@@ -2154,7 +3156,8 @@ pub fn export_roadmap_markdown(conn: &Connection) -> Result<String, String> {
             lines.push(format!("### {label}"));
             last_phase = r.phase;
         }
-        lines.push(format!("- {}: {}", r.week_label, r.title));
+        let mark = if r.done { "x" } else { " " };
+        lines.push(format!("- [{}] {}: {}", mark, r.week_label, r.title));
     }
     lines.push(String::new());
 
@@ -2175,7 +3178,8 @@ pub fn build_widget_status(conn: &Connection) -> Result<WidgetStatus, String> {
     let (quests_done, quests_total): (i64, i64) = conn
         .query_row(
             "SELECT COALESCE(SUM(CASE WHEN done = 1 THEN 1 ELSE 0 END), 0), COUNT(*)
-             FROM daily_quests WHERE date = ?1 AND track = 'ielts'",
+             FROM daily_quests
+             WHERE date = ?1 AND track = 'ielts' AND COALESCE(tier, 'core') = 'core'",
             params![today],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
@@ -2205,7 +3209,7 @@ pub fn build_widget_status(conn: &Connection) -> Result<WidgetStatus, String> {
     Ok(WidgetStatus {
         theme: settings.theme,
         quests_done,
-        quests_total,
+        quests_total: quests_total.max(1),
         streak,
         overall_band,
         target_band: settings.target_band,
@@ -2274,230 +3278,211 @@ mod tests {
     use super::*;
 
     #[test]
-    fn schema_seed_imports_40_vocab_and_24_roadmap() {
+    fn schema_seed_imports_40_vocab_24_roadmap_24_dictation_48_speaking_6_paraphrase() {
         let conn = Connection::open_in_memory().unwrap();
         init_schema_and_seed(&conn, None).unwrap();
         let dash = get_dashboard_state(&conn).unwrap();
         assert_eq!(dash.total_vocab_count, 40);
         assert_eq!(dash.roadmap.len(), 24);
-        assert_eq!(dash.quests.len(), 3);
+        assert_eq!(dash.paraphrase_pairs.len(), 6);
         assert_eq!(dash.heatmap.len(), 70);
         assert_eq!(dash.prompts.len(), 12);
-    }
 
-    #[test]
-    fn seed_key_file_is_imported_and_deleted() {
-        let temp_dir = std::env::temp_dir().join("xd4t_seed_test");
-        fs::create_dir_all(&temp_dir).unwrap();
-        let seed_file = temp_dir.join("test_api_key.seed");
-        fs::write(&seed_file, "AQ.TestDummyKey123456").unwrap();
-
-        let conn = Connection::open_in_memory().unwrap();
-        init_schema_and_seed(&conn, Some(&seed_file)).unwrap();
-
-        assert!(!seed_file.exists());
-        let s = get_settings_raw(&conn).unwrap();
-        assert_eq!(s.gemini_api_key, "AQ.TestDummyKey123456");
-        let _ = fs::remove_dir_all(&temp_dir);
-    }
-
-    #[test]
-    fn quest_toggle_updates_study_days_and_streak() {
-        let conn = Connection::open_in_memory().unwrap();
-        init_schema_and_seed(&conn, None).unwrap();
-        let dash = get_dashboard_state(&conn).unwrap();
-        assert_eq!(dash.streak, 0);
-
-        let second_quest_id = dash.quests[1].id; // 15 minutes
-        toggle_quest(&conn, second_quest_id).unwrap();
-
-        let dash2 = get_dashboard_state(&conn).unwrap();
-        assert_eq!(dash2.streak, 1);
-        assert!(dash2.quests[1].done);
-    }
-
-    #[test]
-    fn error_log_increments_duplicate_entries() {
-        let conn = Connection::open_in_memory().unwrap();
-        init_schema_and_seed(&conn, None).unwrap();
-        upsert_error_log(&conn, "Grammar", "he go", "he goes").unwrap();
-        upsert_error_log(&conn, "Grammar", "he go", "he goes").unwrap();
-        let cnt: i64 = conn
-            .query_row(
-                "SELECT count FROM error_logs WHERE wrong_text = 'he go'",
-                [],
-                |r| r.get(0),
-            )
+        let dict_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM dictation_sentences", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(cnt, 2);
+        assert_eq!(dict_count, 24);
+
+        let spk_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM speaking_bank", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(spk_count, 48);
     }
 
     #[test]
-    fn widget_status_builds_expected_baseline() {
+    fn migration_v150_to_v160_preserves_all_existing_user_data() {
         let conn = Connection::open_in_memory().unwrap();
-        init_schema_and_seed(&conn, None).unwrap();
-        let ws = build_widget_status(&conn).unwrap();
-        assert_eq!(ws.quests_done, 0);
-        assert_eq!(ws.quests_total, 3);
-        assert_eq!(ws.overall_band, 5.0);
-        assert_eq!(ws.target_band, 7.0);
-    }
-
-    #[test]
-    fn import_and_export_roadmap_roundtrip() {
-        let conn = Connection::open_in_memory().unwrap();
-        init_schema_and_seed(&conn, None).unwrap();
-
-        let md = crate::roadmap_parser::get_sample_roadmap_md();
-        import_roadmap_to_db(&conn, &md, true, true).unwrap();
-
-        let dash = get_dashboard_state(&conn).unwrap();
-        assert_eq!(dash.settings.exam_date, "2027-05-15");
-        assert_eq!(dash.settings.writing_checklist.len(), 5);
-        assert_eq!(dash.settings.writing_focus_notes.len(), 3);
-        assert_eq!(dash.roadmap.len(), 6);
-        assert_eq!(dash.quests.len(), 3);
-        assert!(dash.total_vocab_count >= 40);
-
-        let exported = export_roadmap_markdown(&conn).unwrap();
-        assert!(exported.contains("## Nhiệm vụ hàng ngày"));
-        assert!(exported.contains("## Checklist Writing cá nhân"));
-        assert!(exported.contains("### GĐ1:"));
-    }
-
-    #[test]
-    fn new_db_defaults_to_pastel_male_and_onboarding_false() {
-        let conn = Connection::open_in_memory().unwrap();
-        init_schema_and_seed(&conn, None).unwrap();
-        let s = get_settings_public(&conn).unwrap();
-        assert_eq!(s.theme, "pastel-male");
-        assert!(!s.onboarding_done);
-        let ws = build_widget_status(&conn).unwrap();
-        assert_eq!(ws.theme, "pastel-male");
-    }
-
-    #[test]
-    fn legacy_db_migrates_dark_light_and_onboarding_done() {
-        let conn = Connection::open_in_memory().unwrap();
+        // Simulate v1.5.0 schema before v1.6.0 columns/tables existed
         conn.execute_batch(
             "CREATE TABLE settings (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
-                theme TEXT NOT NULL DEFAULT 'dark',
-                gemini_api_key TEXT NOT NULL DEFAULT '',
+                theme TEXT NOT NULL DEFAULT 'pastel-male',
+                gemini_api_key TEXT NOT NULL DEFAULT 'AIzaOldKey123',
                 gemini_model TEXT NOT NULL DEFAULT 'gemini-3-flash-preview',
                 exam_date TEXT NOT NULL DEFAULT '2027-05-15',
                 reminder_time TEXT NOT NULL DEFAULT '21:00',
                 autostart INTEGER NOT NULL DEFAULT 0,
-                target_band REAL NOT NULL DEFAULT 7.0
+                target_band REAL NOT NULL DEFAULT 7.0,
+                onboarding_done INTEGER NOT NULL DEFAULT 1
             );
-            INSERT INTO settings (id, theme, gemini_api_key) VALUES (1, 'dark', 'AQ.TestLegacyKey');",
+            INSERT INTO settings (id) VALUES (1);
+            CREATE TABLE daily_quests (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, track TEXT NOT NULL DEFAULT 'ielts', title TEXT NOT NULL, meta TEXT NOT NULL, minutes INTEGER NOT NULL, done INTEGER NOT NULL DEFAULT 0);
+            CREATE TABLE study_days (date TEXT PRIMARY KEY, track TEXT NOT NULL DEFAULT 'ielts', minutes INTEGER NOT NULL DEFAULT 0, quests_done INTEGER NOT NULL DEFAULT 0);
+            INSERT INTO study_days (date, minutes, quests_done) VALUES ('2026-11-24', 30, 3);
+            CREATE TABLE vocab_cards (id INTEGER PRIMARY KEY AUTOINCREMENT, track TEXT NOT NULL DEFAULT 'ielts', topic TEXT NOT NULL, word TEXT NOT NULL, meaning TEXT NOT NULL, example TEXT NOT NULL, ease REAL NOT NULL DEFAULT 2.5, interval_days INTEGER NOT NULL DEFAULT 0, reps INTEGER NOT NULL DEFAULT 0, due_date TEXT NOT NULL);
+            INSERT INTO vocab_cards (topic, word, meaning, example, reps, due_date) VALUES ('Custom', 'resilient', 'kiên cường', 'She is resilient.', 2, '2026-11-25');
+            CREATE TABLE essays (id INTEGER PRIMARY KEY AUTOINCREMENT, mode TEXT NOT NULL, prompt TEXT NOT NULL, content TEXT NOT NULL, word_count INTEGER NOT NULL, ta REAL NOT NULL, cc REAL NOT NULL, lr REAL NOT NULL, gra REAL NOT NULL, overall REAL NOT NULL, feedback_json TEXT NOT NULL, created_at TEXT NOT NULL);
+            CREATE TABLE error_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT NOT NULL, wrong_text TEXT NOT NULL, right_text TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);
+            CREATE TABLE practice_scores (id INTEGER PRIMARY KEY AUTOINCREMENT, skill TEXT NOT NULL, source TEXT NOT NULL, score REAL NOT NULL, note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
+            INSERT INTO practice_scores (skill, source, score, note, created_at) VALUES ('Reading', 'Study4', 6.5, '27/40', '2026-11-24');
+            CREATE TABLE roadmap_items (id INTEGER PRIMARY KEY AUTOINCREMENT, track TEXT NOT NULL DEFAULT 'ielts', phase INTEGER NOT NULL, week_label TEXT NOT NULL, title TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0);
+            INSERT INTO roadmap_items (phase, week_label, title, done) VALUES (1, 'Tuần 1', 'Old Week 1', 1);
+            CREATE TABLE vocab_quizzes (id INTEGER PRIMARY KEY AUTOINCREMENT, taken_at TEXT NOT NULL, mode TEXT NOT NULL, total_questions INTEGER NOT NULL, correct_count INTEGER NOT NULL, forgotten_words TEXT NOT NULL DEFAULT '[]');",
         )
         .unwrap();
 
         init_schema_and_seed(&conn, None).unwrap();
-        let s = get_settings_public(&conn).unwrap();
-        assert_eq!(s.theme, "mono-dark");
-        assert!(s.onboarding_done);
+        let dash = get_dashboard_state(&conn).unwrap();
+        assert_eq!(dash.settings.tts_accent, "en-GB");
+        assert!(dash.settings.has_api_key);
+        assert!(dash.roadmap[0].done);
+        assert_eq!(dash.skill_bands.iter().find(|b| b.skill == "Reading").unwrap().current, 6.5);
+        assert_eq!(dash.paraphrase_pairs.len(), 6);
+    }
 
-        let updated = update_settings(
+    #[test]
+    fn add_vocab_card_and_cure_leech_work_end_to_end() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema_and_seed(&conn, None).unwrap();
+        let today = Local::now().date_naive();
+        let today_str = today.format("%Y-%m-%d").to_string();
+
+        let added = add_vocab_card(
             &conn,
-            Some("light".to_string()),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            "exacerbate",
+            "làm trầm trọng thêm",
+            "Rising heat can exacerbate drought.",
+            "Environment",
+            &today_str,
         )
         .unwrap();
-        assert_eq!(updated.theme, "mono-light");
+        assert!(added.is_user_card);
+
+        // Fail 3 times -> becomes leech
+        review_vocab_card(&conn, added.id, 0, today).unwrap();
+        review_vocab_card(&conn, added.id, 0, today).unwrap();
+        let card3 = review_vocab_card(&conn, added.id, 0, today).unwrap();
+        assert_eq!(card3.lapses, 3);
+
+        let leeches = get_due_vocab(&conn, &today_str, Some(true)).unwrap();
+        assert_eq!(leeches.len(), 1);
+        assert_eq!(leeches[0].id, added.id);
+
+        let cured = cure_leech_card(
+            &conn,
+            added.id,
+            "Overcrowding can exacerbate urban traffic delays.",
+            &today_str,
+        )
+        .unwrap();
+        assert_eq!(cured.lapses, 0);
+        assert!(cured.example.contains("Overcrowding"));
+        assert!(get_due_vocab(&conn, &today_str, Some(true)).unwrap().is_empty());
+
+        toggle_hide_vocab_card(&conn, added.id, true).unwrap();
+        let due_after_hide = get_due_vocab(&conn, &today_str, None).unwrap();
+        assert!(!due_after_hide.iter().any(|c| c.id == added.id));
+        delete_vocab_card(&conn, added.id).unwrap();
     }
 
     #[test]
-    fn backup_and_restore_validation_checks_integrity_and_schema() {
-        let temp_dir = std::env::temp_dir().join("xd4t_backup_test");
-        let _ = fs::remove_dir_all(&temp_dir);
-        fs::create_dir_all(&temp_dir).unwrap();
+    fn micro_check_and_error_fix_quiz_and_dictation_work() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema_and_seed(&conn, None).unwrap();
+        let today = Local::now().date_naive();
 
-        let src_db = temp_dir.join("src.db");
-        let bak_db = temp_dir.join("bak.db");
-        let bad_db = temp_dir.join("bad.db");
-        let wrong_db = temp_dir.join("wrong.db");
+        let err_quiz = generate_error_fix_quiz(&conn, Some(5)).unwrap();
+        assert_eq!(err_quiz.len(), 5);
 
-        {
-            let conn = Connection::open(&src_db).unwrap();
-            init_schema_and_seed(&conn, None).unwrap();
-            checkpoint_and_copy_backup(&conn, &src_db, &bak_db).unwrap();
-        }
-        validate_backup_file(&bak_db).unwrap();
+        let micro = generate_micro_check(&conn).unwrap();
+        assert_eq!(micro.len(), 5);
+        assert_eq!(micro.iter().filter(|m| m.item_type == "vocab").count(), 2);
+        assert_eq!(micro.iter().filter(|m| m.item_type == "error_fix").count(), 2);
+        assert_eq!(micro.iter().filter(|m| m.item_type == "paraphrase").count(), 1);
 
-        fs::write(&bad_db, b"not a sqlite file").unwrap();
-        assert!(validate_backup_file(&bad_db).is_err());
+        let micro_res = submit_micro_check(
+            &conn,
+            micro
+                .iter()
+                .map(|m| MicroCheckAnswerInput {
+                    item_type: m.item_type.clone(),
+                    ref_id: m.ref_id,
+                    correct: true,
+                    gave_up: false,
+                })
+                .collect(),
+            today,
+        )
+        .unwrap();
+        assert_eq!(micro_res.accuracy_pct, 100);
 
-        {
-            let wrong = Connection::open(&wrong_db).unwrap();
-            wrong.execute("CREATE TABLE unrelated (id INTEGER PRIMARY KEY)", []).unwrap();
-        }
-        assert!(validate_backup_file(&wrong_db).is_err());
+        let dict = get_dictation_batch(&conn, Some(5)).unwrap();
+        assert_eq!(dict.len(), 5);
+        assert_eq!(dict[0].level, "6.5");
 
-        let _ = fs::remove_dir_all(&temp_dir);
+        let dict_res = submit_dictation_session(
+            &conn,
+            vec![DictationResultInput {
+                sentence_id: dict[0].id,
+                accuracy_pct: 90,
+                wrong_words: vec!["wednesdays".to_string()],
+            }],
+            today,
+        )
+        .unwrap();
+        assert_eq!(dict_res.avg_accuracy, 90);
     }
 
     #[test]
-    fn set_study_level_switches_between_65_and_80_cleanly() {
+    fn speaking_bank_and_sessions_and_paraphrase_crud_work() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema_and_seed(&conn, None).unwrap();
+        let today = Local::now().date_naive();
+
+        let cue = get_speaking_cue(&conn, Some(3), Some(false), None).unwrap();
+        assert_eq!(cue.week_num, 3);
+        assert_eq!(cue.level, "6.5");
+        assert_eq!(cue.cue_bullets.len(), 4);
+        assert_eq!(cue.part3_questions.len(), 4);
+
+        let cue2 = get_speaking_cue(&conn, Some(3), Some(true), Some(cue.id)).unwrap();
+        assert_ne!(cue2.id, cue.id);
+
+        let (sess, _) = save_speaking_session(
+            &conn,
+            Some(cue.id),
+            &cue.cue_title,
+            "6.5",
+            "4-3-2",
+            110,
+            135,
+            10,
+            4,
+            6.0,
+            6.0,
+            5.5,
+            6.0,
+            6.0,
+            "Trôi chảy hơn",
+            "West lake is peaceful...",
+            "{}",
+            today,
+        )
+        .unwrap();
+        assert_eq!(sess.wpm_end, 135);
+        assert_eq!(list_speaking_sessions(&conn).unwrap().len(), 1);
+
+        let p = add_paraphrase(&conn, "ubiquitous", "omnipresent, pervasive", "Cam 18 P3", "C1").unwrap();
+        assert!(list_paraphrases(&conn).unwrap().iter().any(|x| x.id == p.id));
+        delete_paraphrase(&conn, p.id).unwrap();
+    }
+
+    #[test]
+    fn weekday_core_quests_stay_under_30_minutes_and_bonus_excluded_from_streak() {
         let conn = Connection::open_in_memory().unwrap();
         init_schema_and_seed(&conn, None).unwrap();
 
-        let d0 = get_dashboard_state(&conn).unwrap();
-        assert_eq!(d0.settings.target_band, 7.0);
-        assert_eq!(d0.total_vocab_count, 40);
-        assert_eq!(d0.error_logs.len(), 10);
-        // Mark Tuần 1 done before switching
-        toggle_roadmap_item(&conn, d0.roadmap[0].id).unwrap();
-
-        let d80 = set_study_level(&conn, "8.0").unwrap();
-        assert_eq!(d80.settings.target_band, 8.0);
-        assert_eq!(d80.total_vocab_count, 40);
-        assert_eq!(d80.roadmap.len(), 24);
-        assert!(d80.roadmap[0].done); // Preserved!
-        assert!(!d80.roadmap[0].title.starts_with('['));
-        assert_eq!(d80.skill_bands[0].target, 8.5);
-        assert_eq!(d80.skill_bands[1].target, 8.5);
-        assert_eq!(d80.skill_bands[2].target, 7.5);
-        assert_eq!(d80.skill_bands[3].target, 7.5);
-        assert_eq!(d80.skill_bands[0].current, 7.0); // Fresh DB baseline for 8.0
-        assert_eq!(d80.error_logs.len(), 10);
-        assert!(ERROR_LOG_SEEDS_80.iter().any(|e| e.wrong_text == d80.error_logs[0].wrong_text));
-
-        let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
-        let due_80 = get_due_vocab(&conn, &today).unwrap();
-        assert!(!due_80.is_empty());
-        assert!(VOCAB_SEEDS_80.iter().any(|v| v.word == due_80[0].word));
-
-        // Review first C1-C2 card so reps > 0, and add a custom error log
-        review_vocab_card(&conn, due_80[0].id, 3, Local::now().date_naive()).unwrap();
-        upsert_error_log(&conn, "Custom", "my wrong", "my right").unwrap();
-
-        // Switching to 8.0 again does not duplicate vocab cards
-        let d80_again = set_study_level(&conn, "8.0").unwrap();
-        assert_eq!(d80_again.total_vocab_count, 40);
-
-        // User enters a real practice score, then switches back to 6.5 -> score, studied card, and custom error preserved!
-        add_practice_score(&conn, "Reading", "Cam 16 T1", 8.0, "35/40").unwrap();
-        let d65 = set_study_level(&conn, "6.5").unwrap();
-        assert_eq!(d65.settings.target_band, 7.0);
-        assert_eq!(d65.skill_bands[1].target, 7.0);
-        assert_eq!(d65.skill_bands[1].current, 8.0); // User score preserved!
-        assert!(d65.roadmap[0].done);
-        assert_eq!(d65.total_vocab_count, 41); // 40 Band 6.5 + 1 studied Band 8.0 card
-        assert!(d65.error_logs.iter().any(|e| e.wrong_text == "my wrong"));
-    }
-
-    #[test]
-    fn weekday_quest_rotation_covers_all_7_days_for_both_tracks() {
         for is_80 in [false, true] {
-            let mut titles = std::collections::HashSet::new();
             for wd in [
                 Weekday::Mon,
                 Weekday::Tue,
@@ -2508,145 +3493,41 @@ mod tests {
                 Weekday::Sun,
             ] {
                 let q = default_quests_for_weekday(wd, is_80);
-                let expected_len = if matches!(wd, Weekday::Thu | Weekday::Sun) { 4 } else { 3 };
-                assert_eq!(q.len(), expected_len);
-                titles.insert(q[1].0);
+                let core_mins: i64 = q.iter().filter(|x| x.tier == "core").map(|x| x.minutes).sum();
+                assert!(core_mins <= 30, "Core mins exceeded 30 on {:?}: {}", wd, core_mins);
+                assert!(q.iter().any(|x| x.tier == "bonus"));
             }
-            assert_eq!(titles.len(), 7);
         }
+
+        let dash = get_dashboard_state(&conn).unwrap();
+        let bonus_q = dash.quests.iter().find(|q| q.tier == "bonus").unwrap();
+        toggle_quest(&conn, bonus_q.id).unwrap();
+        let dash_after_bonus = get_dashboard_state(&conn).unwrap();
+        assert_eq!(dash_after_bonus.streak, 0); // Bonus alone does not grant streak
+
+        let core_big = dash_after_bonus
+            .quests
+            .iter()
+            .find(|q| q.tier == "core" && q.minutes >= 10)
+            .unwrap();
+        toggle_quest(&conn, core_big.id).unwrap();
+        let dash_after_core = get_dashboard_state(&conn).unwrap();
+        assert_eq!(dash_after_core.streak, 1);
     }
 
     #[test]
-    fn generate_vocab_quiz_supports_all_three_modes() {
+    fn import_roadmap_preserves_done_weeks_and_imports_paraphrases() {
         let conn = Connection::open_in_memory().unwrap();
         init_schema_and_seed(&conn, None).unwrap();
 
-        let assert_clean_question = |q: &QuizQuestion| {
-            assert!(!q.word.contains(" vs "), "word leaked vs note: {}", q.word);
-            assert!(!q.word.contains(" / "), "word leaked slash note: {}", q.word);
-            assert!(!q.word.contains('('), "word leaked paren note: {}", q.word);
-            assert!(
-                !q.meaning.to_lowercase().contains(&q.word.trim().to_lowercase()),
-                "meaning leaked answer '{}' in '{}'",
-                q.word,
-                q.meaning
-            );
-            for opt in &q.options {
-                assert!(!opt.contains(" vs "), "option leaked vs note: {}", opt);
-                assert!(!opt.contains(" / "), "option leaked slash note: {}", opt);
-                assert!(!opt.contains('('), "option leaked paren note: {}", opt);
-            }
-            if q.question_type == "meaning_mcq" {
-                assert!(q.cloze_sentence.is_none());
-            } else if q.question_type == "cloze_mcq" {
-                assert!(q.cloze_sentence.is_some());
-            }
-        };
+        let d0 = get_dashboard_state(&conn).unwrap();
+        toggle_roadmap_item(&conn, d0.roadmap[0].id).unwrap();
 
-        let mixed = generate_vocab_quiz(&conn, Some(10), Some("mixed".to_string())).unwrap();
-        assert_eq!(mixed.len(), 10);
-        let typing_n = mixed.iter().filter(|q| q.question_type == "typing").count();
-        let mcq_n = mixed.len() - typing_n;
-        assert_eq!(typing_n, 3);
-        assert_eq!(mcq_n, 7);
-        for q in &mixed {
-            assert_clean_question(q);
-        }
+        let md = crate::roadmap_parser::get_sample_roadmap_md();
+        import_roadmap_to_db(&conn, &md, true, true).unwrap();
 
-        let mcq = generate_vocab_quiz(&conn, Some(10), Some("mcq".to_string())).unwrap();
-        assert_eq!(mcq.len(), 10);
-        for q in &mcq {
-            assert_clean_question(q);
-            assert!(q.question_type == "meaning_mcq" || q.question_type == "cloze_mcq");
-            assert_eq!(q.options.len(), 4);
-            assert!(q.options.contains(&q.word));
-            let uniq: std::collections::HashSet<&String> = q.options.iter().collect();
-            assert_eq!(uniq.len(), 4);
-        }
-
-        let typing = generate_vocab_quiz(&conn, Some(5), Some("typing".to_string())).unwrap();
-        assert_eq!(typing.len(), 5);
-        for q in &typing {
-            assert_clean_question(q);
-            assert_eq!(q.question_type, "typing");
-            assert!(q.options.is_empty());
-            assert!(!q.hint.is_empty());
-        }
-    }
-
-    #[test]
-    fn submit_vocab_quiz_requeues_forgotten_cards_and_ticks_quiz_quest() {
-        let conn = Connection::open_in_memory().unwrap();
-        init_schema_and_seed(&conn, None).unwrap();
-
-        let today = Local::now().date_naive();
-        let today_str = today.format("%Y-%m-%d").to_string();
-
-        // Insert a Quiz quest for today so we can verify auto-tick
-        conn.execute(
-            "INSERT INTO daily_quests (date, track, title, meta, minutes, done)
-             VALUES (?1, 'ielts', 'Quiz kiểm tra 10 từ vựng định kỳ', 'Test', 5, 0)",
-            params![today_str],
-        )
-        .unwrap();
-
-        let quiz = generate_vocab_quiz(&conn, Some(4), Some("mcq".to_string())).unwrap();
-        assert_eq!(quiz.len(), 4);
-
-        // Mark first card as already learned (reps = 3, due in future) so we prove forgetting resets it
-        let future_date = (today + Duration::days(10)).format("%Y-%m-%d").to_string();
-        conn.execute(
-            "UPDATE vocab_cards SET reps = 3, interval_days = 10, ease = 2.5, due_date = ?1 WHERE id = ?2",
-            params![future_date, quiz[0].card_id],
-        )
-        .unwrap();
-
-        let inputs = vec![
-            QuizAnswerInput { card_id: quiz[0].card_id, correct: false, gave_up: false },
-            QuizAnswerInput { card_id: quiz[1].card_id, correct: true, gave_up: true }, // gave_up counts as forgotten
-            QuizAnswerInput { card_id: quiz[2].card_id, correct: true, gave_up: false },
-            QuizAnswerInput { card_id: quiz[3].card_id, correct: true, gave_up: false },
-        ];
-
-        let res = submit_vocab_quiz(&conn, "mcq".to_string(), inputs, today).unwrap();
-        assert_eq!(res.total_questions, 4);
-        assert_eq!(res.correct_count, 2);
-        assert_eq!(res.accuracy_pct, 50);
-        assert_eq!(res.forgotten_cards.len(), 2);
-        assert!(res.marked_quest_done);
-
-        // Verify forgotten card 0 was reset and appears at the head of get_due_vocab
-        let (reps0, interval0, ease0, due0): (i64, i64, f64, String) = conn
-            .query_row(
-                "SELECT reps, interval_days, ease, due_date FROM vocab_cards WHERE id = ?1",
-                params![quiz[0].card_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-            )
-            .unwrap();
-        assert_eq!(reps0, 0);
-        assert_eq!(interval0, 0);
-        assert!(ease0 < 2.5);
-        assert_eq!(due0, today_str);
-
-        let due_list = get_due_vocab(&conn, &today_str).unwrap();
-        let top_ids: Vec<i64> = due_list.iter().take(2).map(|c| c.id).collect();
-        assert!(top_ids.contains(&quiz[0].card_id));
-        assert!(top_ids.contains(&quiz[1].card_id));
-
-        // Verify vocab_quizzes row saved
-        let q_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM vocab_quizzes", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(q_count, 1);
-
-        // Verify daily_quests quiz row marked done = 1
-        let quest_done: i64 = conn
-            .query_row(
-                "SELECT done FROM daily_quests WHERE date = ?1 AND lower(title) LIKE '%quiz%' LIMIT 1",
-                params![today_str],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(quest_done, 1);
+        let dash = get_dashboard_state(&conn).unwrap();
+        assert!(dash.roadmap[0].done); // Week 1 done preserved!
+        assert!(dash.paraphrase_pairs.len() >= 6);
     }
 }

@@ -2,15 +2,15 @@
 
 Ứng dụng tự học **IELTS Band 6.5+** gọn nhẹ cho Windows 10/11 — mỗi ngày chỉ cần **30 phút**, lưu toàn bộ bài học ngay trên máy bạn. Có **4 màu giao diện dịu mắt** (**Pastel Nam**, **Pastel Nữ**, **Mono Đen**, **Mono Trắng**), **AI chấm bài viết** và **thanh nhắc nhỏ dưới góc màn hình**.
 
-> **[⬇️ Tải ngay bộ cài 1-file: XD4T-1ELTS-v1.5.0-Setup.exe](https://github.com/xd4t/XD4T-1ELTS/releases/latest/download/XD4T-1ELTS-v1.5.0-Setup.exe)** *(Windows 10/11 · Miễn phí · Bấm là cài, không cần cài thêm gì)*
+> **[⬇️ Tải ngay bộ cài 1-file: XD4T-1ELTS-v1.6.0-Setup.exe](https://github.com/xd4t/XD4T-1ELTS/releases/latest/download/XD4T-1ELTS-v1.6.0-Setup.exe)** *(Windows 10/11 · Miễn phí · Bấm là cài, không cần cài thêm gì)*
 >
-> **[📖 Hướng dẫn sử dụng chi tiết từ A–Z (cách luyện Study4, nhập điểm, chấm Writing AI...)](docs/HUONG-DAN-SU-DUNG.md)**
+> **[📖 Hướng dẫn sử dụng chi tiết từ A–Z (cách luyện Study4, Speaking Studio, Nghe chép câu, chấm Writing AI...)](docs/HUONG-DAN-SU-DUNG.md)**
 
 ---
 
 ## Cài đặt trong 30 giây (3 bước)
 
-1. **Tải file** **`XD4T-1ELTS-v1.5.0-Setup.exe`** ở nút phía trên.
+1. **Tải file** **`XD4T-1ELTS-v1.6.0-Setup.exe`** ở nút phía trên.
 2. **Mở file vừa tải** → bấm **Next → Install → Finish** *(nếu Windows hiện bảng xanh "Windows protected your PC", chỉ cần bấm **More info** → **Run anyway**)*.
 3. **Mở app** từ màn hình chính, chọn màu giao diện bạn thích rồi **bắt đầu học ngay**.
 
@@ -32,17 +32,15 @@
 
 ---
 
-## App giúp bạn học gì mỗi ngày?
+## App giúp bạn học gì mỗi ngày? (`v1.6.0` · Hệ Sinh Thái 4 Kỹ Năng Khép Kín)
 
-- **Học gọn 30 phút mỗi ngày:** Chia sẵn 3 việc cần làm, có **đồng hồ tập trung 15 phút** và **lịch theo dõi chuỗi ngày học** để bạn không bỏ dở.
-- **Luyện viết có AI chấm bài:** Gợi ý dàn ý Band 6.5, nhắc soát lỗi nhanh 3 phút, sửa lỗi trực tiếp và gợi ý bài mẫu hay hơn.
-- **Ôn từ vựng tự động nhớ lâu:** Hơn 40 cụm từ hay dùng cho Band 6.5, tự động nhắc ôn lại đúng lúc bạn sắp quên.
-- **2 chế độ lộ trình trong 1 app (`Aim 6.5 · Tiêu chuẩn` & `Aim 8.0 · Nâng cao`):**
-  - **🎯 Aim 6.5 · Tiêu chuẩn (Vùng đệm 7.0):** Khuyên dùng cho người học nền **4.5–5.5** — tập trung diệt lỗi gốc, nắm 5 khung Writing và săn 30–34/40 câu.
-  - **🚀 Aim 8.0 · Nâng cao (Độ khó cao):** Khuyến khích khi bạn **đã vững nền 6.5+** (L/R ≥ 27–30/40 câu) — bổ sung 40 từ C1–C2 & Hedging, lộ trình 24 tuần KPI nâng cao và chấm Writing chuẩn Band 8.0.
-  - Tự động **xoay vòng nhiệm vụ T2 → CN** phủ đủ 4 kỹ năng, mỗi tuần trong 24 tuần đều gắn **KPI định lượng kiểm được**.
-- **Lộ trình học riêng & Sổ lỗi:** Theo dõi tiến độ từng tuần, lưu điểm thi thử và gom các lỗi hay mắc để tránh lặp lại.
-- **Thanh nhắc nhỏ dưới góc màn hình:** Hiện số bài đã xong hôm nay, chuỗi ngày học và mức điểm hiện tại ngay cạnh đồng hồ Windows.
+- **Nhiệm vụ `CORE ≤ 30 phút` vs `BONUS` (đan xen 4 buổi Study4 thi thật):** Mỗi ngày gồm **SRS 8p + Micro-Check 2p + 1 kỹ năng trọng tâm 16–20p** (có nút mở 1 chạm tới đúng công cụ hoặc Study4). Chỉ nhiệm vụ Core tính vào streak!
+- **Phòng Luyện Nói (Speaking Studio — 48 Cue Card 24 tuần):** Chọn chế độ **Thi thật (Part 2 2:00 + Part 3)** hoặc **Phản xạ 4-3-2**, ghi âm nén trực tiếp và bấm **Chấm AI (Gemini Audio)** (hoặc dùng nút Copy Prompt + Checklist tự chấm 5 mục miễn phí).
+- **Nghe chép câu (Listening Dictation — 100% Offline):** 24 câu bẫy thực chiến (số nhiều `-s`, đuôi `-ed`, con số, từ đổi ý), chỉnh tốc độ `0.85x / 1.0x / 1.15x`, chấm **Word-by-word Diff** xanh/đỏ và đẩy ngay từ sai vào Sổ lỗi.
+- **Luyện viết có Top 3 Lỗi & Cảnh báo lặp lỗi:** Thanh nhắc **Top 3 lỗi hay mắc** ngay trên khung viết; sau khi chấm AI, tự cảnh báo nếu lặp lại lỗi trong Top 3 kèm nút luyện sửa lỗi ngay.
+- **Flashcard SM-2, Chữa 🔥 Từ cứng đầu & Quiz Sửa Lỗi:** Hỗ trợ **Audio-First (`en-GB`/`en-US`)**, **Câu đục lỗ**, tự thêm từ (**Sentence Mining**), nút **`✍️ Chữa từ này`** cho thẻ quên ≥ 3 lần, **Quiz Gõ Sửa Lỗi** và **Micro-Check 5 câu (2p)**.
+- **Bảng Paraphrase Reading & Lộ trình 24 tuần Dual-Track (`6.5` & `8.0`):** Lưu cặp đồng nghĩa Reading 4 cột (tự nuôi vào Micro-Check), kèm mẫu nạp lộ trình chuẩn **`docs/LO-TRINH-MAU-V1.6.md`**.
+- **Thanh nhắc nhỏ dưới góc màn hình:** Hiện số bài Core đã xong hôm nay, chuỗi ngày học và mức điểm hiện tại ngay cạnh đồng hồ Windows.
 
 ---
 

@@ -9,6 +9,14 @@ pub struct ParsedQuest {
     pub title: String,
     pub meta: String,
     pub minutes: i64,
+    #[serde(default = "default_core_tier")]
+    pub tier: String,
+    #[serde(default)]
+    pub action_hint: String,
+}
+
+fn default_core_tier() -> String {
+    "core".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,11 +35,21 @@ pub struct ParsedVocabCard {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParsedParaphrase {
+    pub question_term: String,
+    pub passage_paraphrase: String,
+    pub source_type: String,
+    pub trap_note: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParsedRoadmapWeek {
     pub phase: i64,
     pub phase_label: String,
     pub week_label: String,
     pub title: String,
+    #[serde(default)]
+    pub checked: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +66,7 @@ pub struct ParsedRoadmap {
     pub writing_focus_notes: Vec<String>,
     pub error_logs: Vec<ParsedErrorLog>,
     pub vocab_cards: Vec<ParsedVocabCard>,
+    pub paraphrase_pairs: Vec<ParsedParaphrase>,
     pub roadmap_weeks: Vec<ParsedRoadmapWeek>,
     pub phase_labels: BTreeMap<i64, String>,
     pub warnings: Vec<String>,
@@ -67,6 +86,7 @@ pub struct RoadmapPreview {
     pub focus_notes_count: usize,
     pub error_logs_count: usize,
     pub vocab_count: usize,
+    pub paraphrase_count: usize,
     pub phases_count: usize,
     pub weeks_count: usize,
     pub phases_summary: Vec<String>,
@@ -81,6 +101,7 @@ enum Section {
     WritingFocus,
     ErrorLogs,
     Vocab,
+    Paraphrase,
     Roadmap,
 }
 
@@ -103,21 +124,29 @@ fn strip_backticks(s: &str) -> String {
     s.replace('`', "").trim().to_string()
 }
 
-fn strip_list_marker(line: &str) -> Option<&str> {
+fn strip_list_marker_with_check(line: &str) -> Option<(&str, bool)> {
     let t = line.trim();
-    if let Some(rest) = t.strip_prefix("- ") {
-        return Some(rest.trim());
-    }
-    if let Some(rest) = t.strip_prefix("* ") {
-        return Some(rest.trim());
-    }
-    // Support numbered list like "1. item"
-    if let Some(dot_idx) = t.find(". ") {
+    let rest = if let Some(r) = t.strip_prefix("- ") {
+        Some(r.trim())
+    } else if let Some(r) = t.strip_prefix("* ") {
+        Some(r.trim())
+    } else if let Some(dot_idx) = t.find(". ") {
         if dot_idx > 0 && dot_idx <= 3 && t[..dot_idx].chars().all(|c| c.is_ascii_digit()) {
-            return Some(t[dot_idx + 2..].trim());
+            Some(t[dot_idx + 2..].trim())
+        } else {
+            None
         }
+    } else {
+        None
+    }?;
+
+    if let Some(after) = rest.strip_prefix("[ ] ") {
+        return Some((after.trim(), false));
     }
-    None
+    if let Some(after) = rest.strip_prefix("[x] ").or_else(|| rest.strip_prefix("[X] ")) {
+        return Some((after.trim(), true));
+    }
+    Some((rest, false))
 }
 
 fn normalize_date(raw: &str) -> Option<String> {
@@ -160,7 +189,13 @@ fn parse_band_pair(raw: &str) -> Option<(f64, f64)> {
 
 fn detect_section(heading: &str) -> Section {
     let h = heading.trim().to_lowercase();
-    if h.contains("nhiệm vụ") || h.contains("nhiem vu") || h.contains("daily") || h.contains("quest") {
+    if h.contains("nhiệm vụ")
+        || h.contains("nhiem vu")
+        || h.contains("lịch ngày")
+        || h.contains("lich ngay")
+        || h.contains("daily")
+        || h.contains("quest")
+    {
         Section::DailyQuests
     } else if h.contains("checklist") {
         Section::WritingChecklist
@@ -168,31 +203,79 @@ fn detect_section(heading: &str) -> Section {
         Section::WritingFocus
     } else if h.contains("sổ lỗi") || h.contains("so loi") || h.contains("error") {
         Section::ErrorLogs
-    } else if h.contains("từ vựng") || h.contains("tu vung") || h.contains("srs") || h.contains("vocab") {
+    } else if h.contains("paraphrase") {
+        Section::Paraphrase
+    } else if h.contains("từ vựng")
+        || h.contains("tu vung")
+        || h.contains("sentence mining")
+        || h.contains("srs")
+        || h.contains("vocab")
+    {
         Section::Vocab
-    } else if h.contains("lộ trình") || h.contains("lo trinh") || h.contains("roadmap") || h.contains("theo tuần") {
+    } else if h.contains("lộ trình")
+        || h.contains("lo trinh")
+        || h.contains("giai đoạn")
+        || h.contains("giai doan")
+        || h.contains("roadmap")
+        || h.contains("theo tuần")
+    {
         Section::Roadmap
     } else {
         Section::None
     }
 }
 
+pub fn infer_quest_action_hint(title: &str) -> String {
+    let low = title.to_lowercase();
+    if low.contains("micro-check") || low.contains("micro check") {
+        "micro_check".to_string()
+    } else if low.contains("dictation") || low.contains("nghe chép") || low.contains("chép chính tả") {
+        "dictation".to_string()
+    } else if low.contains("luyện nói") || low.contains("cue card") || low.contains("speaking") {
+        "speaking".to_string()
+    } else if low.contains("quiz") || low.contains("cứng đầu") || low.contains("leech") {
+        "quiz".to_string()
+    } else if low.contains("paraphrase") && !low.contains("study4") {
+        "paraphrase".to_string()
+    } else if low.contains("study4") {
+        "study4".to_string()
+    } else if low.contains("writing") || low.contains("viết") {
+        "writing".to_string()
+    } else if low.contains("srs") || low.contains("flashcard") || low.contains("từ vựng") {
+        "srs".to_string()
+    } else {
+        String::new()
+    }
+}
+
 fn parse_quest_line(item: &str) -> ParsedQuest {
     let clean = strip_backticks(item);
     let mut minutes = 15_i64;
+    let mut tier = "core".to_string();
     let mut rest = clean.as_str();
 
-    if rest.starts_with('[') {
-        if let Some(end_idx) = rest.find(']') {
-            let tag = rest[1..end_idx].trim();
-            let digits: String = tag.chars().take_while(|c| c.is_ascii_digit()).collect();
-            if let Ok(m) = digits.parse::<i64>() {
-                if m > 0 {
-                    minutes = m;
+    loop {
+        if rest.starts_with('[') {
+            if let Some(end_idx) = rest.find(']') {
+                let tag = rest[1..end_idx].trim();
+                let tag_low = tag.to_lowercase();
+                if tag_low == "bonus" || tag_low == "tùy chọn" {
+                    tier = "bonus".to_string();
+                } else if tag_low == "core" {
+                    tier = "core".to_string();
+                } else {
+                    let digits: String = tag.chars().take_while(|c| c.is_ascii_digit()).collect();
+                    if let Ok(m) = digits.parse::<i64>() {
+                        if m > 0 {
+                            minutes = m;
+                        }
+                    }
                 }
+                rest = rest[end_idx + 1..].trim();
+                continue;
             }
-            rest = rest[end_idx + 1..].trim();
         }
+        break;
     }
 
     let (title, meta) = if let Some((t, m)) = rest.split_once('|') {
@@ -200,11 +283,14 @@ fn parse_quest_line(item: &str) -> ParsedQuest {
     } else {
         (rest.trim().to_string(), "Nhiệm vụ cá nhân".to_string())
     };
+    let action_hint = infer_quest_action_hint(&title);
 
     ParsedQuest {
         title,
         meta,
         minutes,
+        tier,
+        action_hint,
     }
 }
 
@@ -239,7 +325,7 @@ fn parse_error_line(item: &str) -> Option<ParsedErrorLog> {
 
 fn parse_vocab_line(item: &str) -> Option<ParsedVocabCard> {
     let clean = strip_backticks(item);
-    let mut topic = "General".to_string();
+    let mut topic = "Sentence Mining".to_string();
     let mut rest = clean.as_str();
 
     if rest.starts_with('[') {
@@ -267,6 +353,66 @@ fn parse_vocab_line(item: &str) -> Option<ParsedVocabCard> {
         meaning: parts[1].to_string(),
         example,
     })
+}
+
+fn parse_paraphrase_line(item: &str) -> Option<ParsedParaphrase> {
+    let clean = strip_backticks(item);
+    let normalized = clean.replace('→', "->");
+    let (left, right_all) = normalized.split_once("->")?;
+    let question_term = left.trim().to_string();
+    if question_term.is_empty() {
+        return None;
+    }
+    let parts: Vec<&str> = right_all.split('|').map(|s| s.trim()).collect();
+    let passage_paraphrase = parts.first().copied().unwrap_or("").trim().to_string();
+    if passage_paraphrase.is_empty() {
+        return None;
+    }
+    let source_type = parts.get(1).copied().unwrap_or("Study4 Reading").trim().to_string();
+    let trap_note = parts.get(2).copied().unwrap_or("").trim().to_string();
+    Some(ParsedParaphrase {
+        question_term,
+        passage_paraphrase,
+        source_type,
+        trap_note,
+    })
+}
+
+fn parse_roadmap_table_row(line: &str) -> Option<(String, String, bool)> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with('|') {
+        return None;
+    }
+    let cells: Vec<&str> = trimmed
+        .trim_matches('|')
+        .split('|')
+        .map(|s| s.trim())
+        .collect();
+    if cells.len() < 2 {
+        return None;
+    }
+    // Skip separator rows like |---|---|
+    if cells.iter().all(|c| !c.is_empty() && c.chars().all(|ch| ch == '-' || ch == ':' || ch == ' ')) {
+        return None;
+    }
+    let c0_low = cells[0].to_lowercase();
+    if c0_low == "tuần" || c0_low == "week" || c0_low == "mốc" {
+        return None;
+    }
+    let week_label = strip_backticks(cells[0]);
+    let mut title_parts: Vec<String> = cells[1..]
+        .iter()
+        .map(|c| strip_backticks(c))
+        .filter(|s| !s.is_empty())
+        .collect();
+    if week_label.is_empty() || title_parts.is_empty() {
+        return None;
+    }
+    let checked = title_parts.last().map(|s| s == "✓" || s.eq_ignore_ascii_case("done")).unwrap_or(false);
+    if checked && title_parts.len() > 1 {
+        title_parts.pop();
+    }
+    Some((week_label, title_parts.join(" · "), checked))
 }
 
 fn extract_phase_number(heading: &str, fallback_phase: i64) -> i64 {
@@ -308,6 +454,7 @@ pub fn parse_roadmap_markdown(raw: &str) -> Result<ParsedRoadmap, String> {
         writing_focus_notes: Vec::new(),
         error_logs: Vec::new(),
         vocab_cards: Vec::new(),
+        paraphrase_pairs: Vec::new(),
         roadmap_weeks: Vec::new(),
         phase_labels: BTreeMap::new(),
         warnings: Vec::new(),
@@ -316,7 +463,6 @@ pub fn parse_roadmap_markdown(raw: &str) -> Result<ParsedRoadmap, String> {
     let lines: Vec<&str> = content.lines().collect();
     let mut idx = 0;
 
-    // Parse optional YAML frontmatter
     if lines.first().map(|l| l.trim() == "---").unwrap_or(false) {
         idx = 1;
         while idx < lines.len() {
@@ -385,7 +531,21 @@ pub fn parse_roadmap_markdown(raw: &str) -> Result<ParsedRoadmap, String> {
             continue;
         }
         if let Some(h2) = line.strip_prefix("## ") {
-            section = detect_section(h2);
+            let detected = detect_section(h2);
+            if detected == Section::Roadmap {
+                section = Section::Roadmap;
+                let h2_low = h2.to_lowercase();
+                if h2_low.contains("giai đoạn") || h2_low.contains("giai doan") || h2_low.contains("gđ") || h2_low.contains("phase") {
+                    let next_fallback = if out.phase_labels.is_empty() { 1 } else { current_phase + 1 };
+                    current_phase = extract_phase_number(h2, next_fallback);
+                    current_phase_label = strip_backticks(h2);
+                    out.phase_labels
+                        .entry(current_phase)
+                        .or_insert_with(|| current_phase_label.clone());
+                }
+            } else {
+                section = detected;
+            }
             continue;
         }
         if let Some(h3) = line.strip_prefix("### ") {
@@ -400,7 +560,24 @@ pub fn parse_roadmap_markdown(raw: &str) -> Result<ParsedRoadmap, String> {
             continue;
         }
 
-        if let Some(item) = strip_list_marker(line) {
+        if section == Section::Roadmap && line.starts_with('|') {
+            if let Some((week_label, title, checked)) = parse_roadmap_table_row(line) {
+                week_counter += 1;
+                out.phase_labels
+                    .entry(current_phase)
+                    .or_insert_with(|| current_phase_label.clone());
+                out.roadmap_weeks.push(ParsedRoadmapWeek {
+                    phase: current_phase,
+                    phase_label: current_phase_label.clone(),
+                    week_label,
+                    title,
+                    checked,
+                });
+            }
+            continue;
+        }
+
+        if let Some((item, checked)) = strip_list_marker_with_check(line) {
             if item.is_empty() {
                 continue;
             }
@@ -437,6 +614,13 @@ pub fn parse_roadmap_markdown(raw: &str) -> Result<ParsedRoadmap, String> {
                         out.warnings.push(format!("Bỏ qua dòng từ vựng thiếu dấu '|': {item}"));
                     }
                 }
+                Section::Paraphrase => {
+                    if let Some(pair) = parse_paraphrase_line(item) {
+                        out.paraphrase_pairs.push(pair);
+                    } else {
+                        out.warnings.push(format!("Bỏ qua dòng Paraphrase chưa đúng dạng 'từ -> đồng nghĩa | nguồn': {item}"));
+                    }
+                }
                 Section::Roadmap => {
                     week_counter += 1;
                     let clean = strip_backticks(item);
@@ -453,6 +637,7 @@ pub fn parse_roadmap_markdown(raw: &str) -> Result<ParsedRoadmap, String> {
                         phase_label: current_phase_label.clone(),
                         week_label,
                         title,
+                        checked,
                     });
                 }
                 Section::None => {}
@@ -467,6 +652,7 @@ pub fn parse_roadmap_markdown(raw: &str) -> Result<ParsedRoadmap, String> {
         || !out.writing_focus_notes.is_empty()
         || !out.error_logs.is_empty()
         || !out.vocab_cards.is_empty()
+        || !out.paraphrase_pairs.is_empty()
         || !out.roadmap_weeks.is_empty();
 
     if !has_any_data {
@@ -474,7 +660,7 @@ pub fn parse_roadmap_markdown(raw: &str) -> Result<ParsedRoadmap, String> {
     }
 
     if out.daily_quests.is_empty() {
-        out.warnings.push("Chưa có mục '## Nhiệm vụ hàng ngày' — sẽ giữ nhiệm vụ hiện tại.".to_string());
+        out.warnings.push("Chưa có mục '## Nhiệm vụ hàng ngày' — sẽ giữ lịch xoay vòng Core/Bonus mặc định.".to_string());
     }
     if out.roadmap_weeks.is_empty() {
         out.warnings.push("Chưa có mục '## Lộ trình theo tuần' — sẽ giữ lộ trình tuần hiện tại.".to_string());
@@ -501,6 +687,7 @@ pub fn build_preview(parsed: &ParsedRoadmap) -> RoadmapPreview {
         focus_notes_count: parsed.writing_focus_notes.len(),
         error_logs_count: parsed.error_logs.len(),
         vocab_count: parsed.vocab_cards.len(),
+        paraphrase_count: parsed.paraphrase_pairs.len(),
         phases_count: parsed.phase_labels.len(),
         weeks_count: parsed.roadmap_weeks.len(),
         phases_summary,
@@ -509,16 +696,16 @@ pub fn build_preview(parsed: &ParsedRoadmap) -> RoadmapPreview {
 }
 
 pub fn get_roadmap_ai_prompt() -> String {
-    r#"Bạn là chuyên gia lập lộ trình tự học IELTS cá nhân hóa cho ứng dụng XD4T-1ELTS.
+    r#"Bạn là chuyên gia lập lộ trình tự học IELTS cá nhân hóa cho ứng dụng XD4T-1ELTS v1.6.0.
 
 Hãy phỏng vấn nhanh tôi đúng 5 câu ngắn gọn trước (hỏi gộp trong 1 tin nhắn để tôi trả lời 1 lần):
 1. Điểm đầu vào hiện tại của bạn (Overall + Listening / Reading / Speaking / Writing)?
-2. Mục tiêu Band bạn muốn đạt và vùng đệm an toàn (ví dụ: 6.5, đệm 7.0)?
-3. Ngày thi dự kiến (YYYY-MM-DD) và mỗi ngày bạn học được khoảng bao nhiêu phút?
-4. Bạn hay mắc những lỗi Writing/Reading nào nhất?
+2. Mục tiêu Band bạn muốn đạt (6.5 hay 8.0) và vùng đệm an toàn?
+3. Ngày thi dự kiến (YYYY-MM-DD) và mỗi ngày bạn học được khoảng bao nhiêu phút (Core ≤ 30p)?
+4. Bạn hay mắc những lỗi Writing/Speaking/Listening nào nhất?
 5. Bạn muốn nhắc giờ học lúc mấy giờ mỗi tối (HH:MM)?
 
-Sau khi tôi trả lời 5 câu trên, HÃY XUẤT RA DUY NHẤT 1 BLOCK CODE MARKDOWN (`lo-trinh.md`) đúng 100% khuôn mẫu `XD4T-1ELTS Roadmap Format v1` dưới đây (không giải thích lan man bên ngoài block):
+Sau khi tôi trả lời 5 câu trên, HÃY XUẤT RA DUY NHẤT 1 BLOCK CODE MARKDOWN (`lo-trinh.md`) đúng 100% khuôn mẫu `XD4T-1ELTS v1.6.0` dưới đây (không giải thích lan man bên ngoài block):
 
 ```markdown
 ---
@@ -530,19 +717,20 @@ listening: 5.5 -> 7.5
 reading: 5.0 -> 7.0
 speaking: 5.5 -> 6.5
 writing: 4.5 -> 6.0
-daily_minutes: 60
+daily_minutes: 30
 reminder_time: 21:00
 ---
 
-## Nhiệm vụ hàng ngày
-- [10p] Ôn 10 thẻ SRS từ vựng | Giữ chuỗi mỗi ngày
-- [20p] Viết 1 đoạn Writing & chấm AI | Luyện độ chính xác câu
-- [20p] Làm 1 Passage Reading & ghi paraphrase | Tăng tốc đọc hiểu
+## Nhiệm vụ Core
+- [core] [8p] Ôn SRS 8p (Audio-First / Cloze) | Giữ trí nhớ dài hạn
+- [core] [2p] Micro-Check 2p (5 câu rà từ/lỗi/paraphrase) | Chống quên hàng ngày
+- [core] [20p] Study4 Reading: 1 Passage bấm giờ 16p -> nạp 2 cặp Bảng Paraphrase | Luyện thực chiến
+- [bonus] [15p] Nghe chép câu Dictation 5 câu bẫy -s/-ed | Tăng độ tinh tai
 
 ## Checklist Writing cá nhân
 - Chủ ngữ số ít (-s/-es/has)
 - Danh từ đếm được có mạo từ hoặc số nhiều
-- Tránh nhầm cặp từ / sai từ loại
+- Tránh nhầm cặp từ / sai từ loại (effect/affect, harmful)
 - Không nối 2 câu bằng dấu phẩy (comma splice)
 - Đúng khung dạng đề, kết bài không thêm ý mới
 
@@ -552,76 +740,33 @@ reminder_time: 21:00
 - Câu cụt và nối câu bằng dấu phẩy
 
 ## Sổ lỗi ban đầu
-- [Ngữ pháp] Everybody know -> Everybody knows
-- [Từ loại] harmfully effects -> harmful effects
+- [Writing · Ngữ pháp] Everybody know -> Everybody knows
+- [Writing · Từ loại] harmfully effects -> harmful effects
 
-## Từ vựng SRS ban đầu
+## Bảng Paraphrase
+- decline -> fall off, dwindle | Cam 18 T2 · T/F/NG | Phân biệt giá vs nhu cầu
+- harmful -> detrimental to | Study4 #12 · MCQ | Hay gặp ở câu Not Given
+
+## Sentence Mining
 - [Technology] play a pivotal role in | đóng vai trò then chốt trong | Automation plays a pivotal role in modern industry.
 - [Environment] mitigate the adverse impact of | giảm thiểu tác động tiêu cực của | Strict laws can mitigate the adverse impact of pollution.
 
 ## Lộ trình theo tuần
-### GĐ1: Diệt lỗi nền & Khung bài (T1-T4)
-- Tuần 1 (T1): Lỗi chia động từ + Task 2 Opinion
-- Tuần 2 (T2): Lỗi từ loại + Task 2 Discussion
-### GĐ2: Tăng tốc & Luyện đề (T5-T8)
-- Tuần 5 (T5): Cambridge Reading + Writing Task 1
+### GĐ1: Diệt lỗi nền & Khung bài (T1-T6)
+- [ ] Tuần 1: Study4 Mini-Mock 15p + 4 cặp Paraphrase | W: rà Top 3 lỗi nhóm 1 | Nói 4-3-2 | Đích: Lỗi ≤ 3/bài
+- [ ] Tuần 2: Study4 P1 + Sentence Mining 4 từ | W: T2 Discussion | Dictation -s/-ed | Đích: W ≥ 5.0
+### GĐ2: Tăng tốc & Luyện đề (T7-T14)
+- [ ] Tuần 7: Study4 Cam 13 + Bảng Paraphrase | W: Task 1 Line | Nói Part 2+3 | Đích: R ≥ 25/40
 ```
 
 Yêu cầu bắt buộc khi xuất file:
 - Giữ nguyên tên các key trong frontmatter (`exam_date`, `overall_current`, `overall_target`, `buffer_target`, `listening`, `reading`, `speaking`, `writing`, `daily_minutes`, `reminder_time`).
-- Giữ nguyên tên các tiêu đề `## ...` và định dạng từng dòng (`[10p] ... | ...`, `sai -> đúng`, `[Topic] word | meaning | example`, `### GĐ1: ...`).
-- Lộ trình theo tuần phải chia rõ từng tuần cụ thể phù hợp với số ngày còn lại đến ngày thi của tôi."#.to_string()
+- Có thể dùng `- [ ] Tuần X: ...` hoặc bảng `| Tuần X | ... |`.
+- Lộ trình theo tuần phải gắn KPI định lượng phù hợp với số ngày còn lại đến ngày thi của tôi."#.to_string()
 }
 
 pub fn get_sample_roadmap_md() -> String {
-    r#"---
-exam_date: 2027-05-15
-overall_current: 5.0
-overall_target: 6.5
-buffer_target: 7.0
-listening: 5.5 -> 7.5
-reading: 5.0 -> 7.0
-speaking: 5.5 -> 6.5
-writing: 4.5 -> 6.0
-daily_minutes: 60
-reminder_time: 21:00
----
-
-## Nhiệm vụ hàng ngày
-- [10p] Ôn 10 thẻ SRS từ vựng | Giữ chuỗi mỗi ngày
-- [25p] Viết 1 đoạn Writing & chấm AI | Luyện độ chính xác câu
-- [25p] Làm 1 Passage Reading & ghi paraphrase | Tăng tốc đọc hiểu
-
-## Checklist Writing cá nhân
-- Chủ ngữ số ít (-s/-es/has)
-- Danh từ đếm được có mạo từ hoặc số nhiều
-- Tránh nhầm cặp từ / sai từ loại
-- Không nối 2 câu bằng dấu phẩy (comma splice)
-- Đúng khung dạng đề, kết bài không thêm ý mới
-
-## Điểm yếu Writing cần AI soi kỹ
-- Lỗi chia động từ, số ít/số nhiều và mạo từ
-- Nhầm từ loại và cặp từ gần nghĩa
-- Câu cụt và nối câu bằng dấu phẩy
-
-## Sổ lỗi ban đầu
-- [Ngữ pháp] Everybody know -> Everybody knows
-- [Từ loại] harmfully effects -> harmful effects
-
-## Từ vựng SRS ban đầu
-- [Technology] play a pivotal role in | đóng vai trò then chốt trong | Automation plays a pivotal role in modern industry.
-- [Education] foster critical thinking | nuôi dưỡng tư duy phản biện | Project-based learning helps foster critical thinking among students.
-
-## Lộ trình theo tuần
-### GĐ1: Diệt lỗi nền & Khung bài (T1-T4)
-- Tuần 1 (T1): Lỗi chia động từ + Task 2 Opinion
-- Tuần 2 (T2): Lỗi từ loại + Task 2 Discussion
-- Tuần 3 (T3): Comma splice + Task 2 Problem-Solution
-- Tuần 4 (T4): Ôn checkpoint GĐ1 + 3 dạng Task 1
-### GĐ2: Tăng tốc & Luyện đề (T5-T8)
-- Tuần 5 (T5): Cambridge Reading + Writing Task 1 Line/Bar
-- Tuần 6 (T6): Paraphrase Reading + Task 2 Two-part
-"#.to_string()
+    include_str!("../../docs/LO-TRINH-MAU-V1.6.md").to_string()
 }
 
 #[cfg(test)]
@@ -629,7 +774,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_full_standard_roadmap_with_arrows_and_backticks() {
+    fn parses_v160_roadmap_with_paraphrase_table_and_checkbox_weeks() {
         let md = r#"```markdown
 ---
 exam_date: 2027-06-20
@@ -640,60 +785,57 @@ listening: 6.0 → 8.0
 reading: 5.5 -> 7.5
 speaking: 5.5 -> 7.0
 writing: `5.0 -> 6.5`
-daily_minutes: 45
+daily_minutes: 30
 reminder_time: 20:30
 ---
 
-## Nhiệm vụ hàng ngày
-- [15p] Ôn 15 thẻ SRS | Từ vựng học thuật
-- [30p] Luyện Writing Task 2
+## Nhiệm vụ Core
+- [core] [8p] Ôn SRS 8p (Audio-First / Cloze) | Hàng ngày
+- [core] [2p] Micro-Check 2p | 5 câu tổng hợp
+- [bonus] [15p] Nghe chép câu Dictation 5 câu | Tùy chọn
 
-## Checklist Writing cá nhân
-- Kiểm tra thì động từ
-- Kiểm tra mạo từ a/an/the
+## Bảng Paraphrase
+- decline -> fall off, dwindle | Cam 18 T2 · T/F/NG | Phân biệt giá vs nhu cầu
+- children -> youngsters, minors | Cam 17 T1 · Matching
 
-## Điểm yếu Writing cần AI soi kỹ
-- Lỗi giới từ và collocation
-
-## Sổ lỗi ban đầu
-- [Ngữ pháp] `he go` → `he goes`
-- [Collocation] make a research -> conduct research
-
-## Từ vựng SRS ban đầu
+## Sentence Mining
 - [Society] bridge the gap | thu hẹp khoảng cách | Education helps bridge the gap between rich and poor.
 
 ## Lộ trình theo tuần
 ### GĐ1: Nền tảng (T1-T2)
-- Tuần 1 (01/12): Ôn ngữ pháp cốt lõi
-- Tuần 2 (08/12): Khung Task 2 Opinion
+- [x] Tuần 1: Ôn ngữ pháp cốt lõi + Study4 Mini-Mock
+- [ ] Tuần 2: Khung Task 2 Opinion + Dictation -s/-ed
 ### GĐ2: Luyện đề (T3-T4)
-- Tuần 3 (15/12): Full test Cambridge 17
+| Tuần | Trọng tâm | Đích tuần |
+|---|---|---|
+| Tuần 3 | Cam 17 + Bảng Paraphrase | R ≥ 26/40 |
 ```"#;
 
         let parsed = parse_roadmap_markdown(md).unwrap();
         assert_eq!(parsed.exam_date.as_deref(), Some("2027-06-20"));
-        assert_eq!(parsed.overall_current, Some(5.5));
-        assert_eq!(parsed.overall_target, Some(7.0));
-        assert_eq!(parsed.buffer_target, Some(7.5));
-        assert_eq!(parsed.daily_minutes, Some(45));
-        assert_eq!(parsed.reminder_time.as_deref(), Some("20:30"));
-        assert_eq!(parsed.skill_bands.len(), 4);
-        assert_eq!(parsed.skill_bands[0].skill, "Listening");
-        assert_eq!(parsed.skill_bands[0].target, 8.0);
-        assert_eq!(parsed.skill_bands[3].current, 5.0);
-        assert_eq!(parsed.daily_quests.len(), 2);
-        assert_eq!(parsed.daily_quests[0].minutes, 15);
-        assert_eq!(parsed.daily_quests[1].meta, "Nhiệm vụ cá nhân");
-        assert_eq!(parsed.writing_checklist.len(), 2);
-        assert_eq!(parsed.writing_focus_notes.len(), 1);
-        assert_eq!(parsed.error_logs.len(), 2);
-        assert_eq!(parsed.error_logs[0].wrong_text, "he go");
-        assert_eq!(parsed.error_logs[0].right_text, "he goes");
+        assert_eq!(parsed.daily_quests.len(), 3);
+        assert_eq!(parsed.daily_quests[0].tier, "core");
+        assert_eq!(parsed.daily_quests[2].tier, "bonus");
+        assert_eq!(parsed.daily_quests[1].action_hint, "micro_check");
+        assert_eq!(parsed.paraphrase_pairs.len(), 2);
+        assert_eq!(parsed.paraphrase_pairs[0].question_term, "decline");
+        assert_eq!(parsed.paraphrase_pairs[0].trap_note, "Phân biệt giá vs nhu cầu");
         assert_eq!(parsed.vocab_cards.len(), 1);
-        assert_eq!(parsed.vocab_cards[0].topic, "Society");
         assert_eq!(parsed.roadmap_weeks.len(), 3);
-        assert_eq!(parsed.roadmap_weeks[2].phase, 2);
-        assert_eq!(parsed.phase_labels.len(), 2);
+        assert!(parsed.roadmap_weeks[0].checked);
+        assert!(!parsed.roadmap_weeks[1].checked);
+        assert_eq!(parsed.roadmap_weeks[2].week_label, "Tuần 3");
+        assert!(parsed.roadmap_weeks[2].title.contains("Cam 17"));
+    }
+
+    #[test]
+    fn parses_official_sample_v16_md() {
+        let md = get_sample_roadmap_md();
+        let parsed = parse_roadmap_markdown(&md).unwrap();
+        assert!(parsed.roadmap_weeks.len() >= 12);
+        assert!(!parsed.paraphrase_pairs.is_empty());
+        assert!(!parsed.vocab_cards.is_empty());
+        assert!(!parsed.daily_quests.is_empty());
     }
 
     #[test]

@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -12,6 +11,7 @@ pub struct Settings {
     pub autostart: bool,
     pub target_band: f64,
     pub onboarding_done: bool,
+    pub tts_accent: String,
     pub writing_checklist: Vec<String>,
     pub writing_focus_notes: Vec<String>,
     pub skill_targets: BTreeMap<String, f64>,
@@ -29,6 +29,7 @@ pub struct SettingsPublic {
     pub autostart: bool,
     pub target_band: f64,
     pub onboarding_done: bool,
+    pub tts_accent: String,
     pub writing_checklist: Vec<String>,
     pub writing_focus_notes: Vec<String>,
     pub phase_labels: BTreeMap<i64, String>,
@@ -43,6 +44,14 @@ pub struct DailyQuest {
     pub meta: String,
     pub minutes: i64,
     pub done: bool,
+    #[serde(default = "default_tier_core")]
+    pub tier: String,
+    #[serde(default)]
+    pub action_hint: String,
+}
+
+fn default_tier_core() -> String {
+    "core".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +74,12 @@ pub struct VocabCard {
     pub interval_days: i64,
     pub reps: i64,
     pub due_date: String,
+    #[serde(default)]
+    pub lapses: i64,
+    #[serde(default)]
+    pub hidden: bool,
+    #[serde(default)]
+    pub is_user_card: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +111,8 @@ pub struct GradeResult {
     pub band65_rewrite: String,
     #[serde(default)]
     pub summary_vi: String,
+    #[serde(default)]
+    pub repeated_top_errors: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -200,6 +217,147 @@ pub struct QuizSubmitResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParaphrasePair {
+    pub id: i64,
+    pub question_term: String,
+    pub passage_paraphrase: String,
+    pub source_type: String,
+    pub trap_note: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DictationSentence {
+    pub id: i64,
+    pub level: String,
+    pub section: String,
+    pub trap_focus: String,
+    pub sentence: String,
+    pub meaning_vi: String,
+    pub practiced_count: i64,
+    pub last_accuracy: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DictationResultInput {
+    pub sentence_id: i64,
+    pub accuracy_pct: i64,
+    pub wrong_words: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DictationSubmitResult {
+    pub total_sentences: i64,
+    pub avg_accuracy: i64,
+    pub marked_quest_done: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorFixQuestion {
+    pub error_id: i64,
+    pub category: String,
+    pub wrong_text: String,
+    pub right_text: String,
+    pub count: i64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MicroCheckItem {
+    pub item_type: String,
+    pub ref_id: i64,
+    pub source_label: String,
+    pub prompt_text: String,
+    pub answer_text: String,
+    pub hint: String,
+    pub meaning_or_note: String,
+    pub options: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MicroCheckAnswerInput {
+    pub item_type: String,
+    pub ref_id: i64,
+    pub correct: bool,
+    pub gave_up: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MicroCheckSubmitResult {
+    pub total_questions: i64,
+    pub correct_count: i64,
+    pub accuracy_pct: i64,
+    pub marked_quest_done: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpeakingCue {
+    pub id: i64,
+    pub week_num: i64,
+    pub level: String,
+    pub topic: String,
+    pub cue_title: String,
+    pub cue_bullets: Vec<String>,
+    pub part3_questions: Vec<String>,
+    pub target_phrases: Vec<String>,
+    pub used_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpeakingErrorItem {
+    pub wrong: String,
+    pub fix: String,
+    pub category: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpeakingAiPayload {
+    pub transcript: String,
+    pub fc_band: f64,
+    pub lr_band: f64,
+    pub gra_band: f64,
+    pub p_band: f64,
+    pub overall_band: f64,
+    pub wpm_start: i64,
+    pub wpm_end: i64,
+    pub fillers_start: i64,
+    pub fillers_end: i64,
+    pub progress_note: String,
+    #[serde(default)]
+    pub top_errors: Vec<SpeakingErrorItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpeakingSession {
+    pub id: i64,
+    pub created_at: String,
+    pub cue_id: Option<i64>,
+    pub cue_title: String,
+    pub track: String,
+    pub mode: String,
+    pub wpm_start: i64,
+    pub wpm_end: i64,
+    pub fillers_start: i64,
+    pub fillers_end: i64,
+    pub fc_band: f64,
+    pub lr_band: f64,
+    pub gra_band: f64,
+    pub p_band: f64,
+    pub overall_band: f64,
+    pub progress_note: String,
+    pub transcript: String,
+    pub feedback_json: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpeakingGradeResponse {
+    pub session: SpeakingSession,
+    pub top_errors: Vec<SpeakingErrorItem>,
+    pub endpoint: String,
+    pub marked_quest_done: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardState {
     pub settings: SettingsPublic,
     pub streak: i64,
@@ -209,9 +367,13 @@ pub struct DashboardState {
     pub skill_bands: Vec<SkillBand>,
     pub due_vocab_count: i64,
     pub total_vocab_count: i64,
+    pub leech_count: i64,
+    pub current_week: i64,
     pub quiz_status: VocabQuizStatus,
     pub roadmap: Vec<RoadmapItem>,
     pub error_logs: Vec<ErrorLog>,
+    pub paraphrase_pairs: Vec<ParaphrasePair>,
+    pub speaking_sessions: Vec<SpeakingSession>,
     pub recent_essays: Vec<Essay>,
     pub practice_scores: Vec<PracticeScore>,
     pub prompts: Vec<WritingPrompt>,
