@@ -551,7 +551,10 @@ async function goToTarget(target: string): Promise<void> {
     } else {
       vocabSubMode = 'flashcard';
       onlyLeechFilter = m === 'leech';
-      dueCards = await invoke<VocabCard[]>('get_due_vocab', { onlyLeech: onlyLeechFilter });
+      [dueCards, dash] = await Promise.all([
+        invoke<VocabCard[]>('get_due_vocab', { onlyLeech: onlyLeechFilter }),
+        invoke<DashboardState>('get_dashboard'),
+      ]);
       cardIdx = 0;
       cardFlipped = false;
     }
@@ -596,6 +599,7 @@ function renderFlashcardMode(curTheme: ThemeId): string {
   const ttsOk = isTtsSupported();
   const accent = dash.settings.tts_accent || 'en-GB';
   const isLeech = curCard ? curCard.lapses >= 3 : false;
+  const leechCount = Math.max(dash.leech_count, dueCards.filter((c) => c.lapses >= 3).length);
 
   return `
     <div class="v-toolbar">
@@ -606,7 +610,7 @@ function renderFlashcardMode(curTheme: ThemeId): string {
         <button type="button" aria-pressed="${cardFaceMode === 'listen'}" data-face="listen">🎧 Nghe trước</button>
       </div>
       <button type="button" class="chip" id="leechChip" aria-pressed="${onlyLeechFilter}">
-        🔥 Từ cứng đầu (${dash.leech_count})
+        🔥 Từ cứng đầu (${leechCount})
       </button>
       <span class="sp"></span>
       <span class="small muted">Giọng: Cài đặt › ${esc(accent)}</span>
@@ -1414,7 +1418,7 @@ function renderApp() {
     <div class="nav">
       <button class="nav-tab ${activeTab === 'today' ? 'active' : ''}" data-tab="today">[1] HÔM NAY</button>
       <button class="nav-tab ${activeTab === 'writing' ? 'active' : ''}" data-tab="writing">[2] WRITING + AI</button>
-      <button class="nav-tab ${activeTab === 'vocab' ? 'active' : ''}" data-tab="vocab">[3] TỪ VỰNG &amp; NGHE (${dueCards.length})</button>
+      <button class="nav-tab ${activeTab === 'vocab' ? 'active' : ''}" data-tab="vocab">[3] TỪ VỰNG &amp; NGHE (${onlyLeechFilter ? dash.due_vocab_count : dueCards.length})</button>
       <button class="nav-tab ${activeTab === 'roadmap' ? 'active' : ''}" data-tab="roadmap">[4] LỘ TRÌNH &amp; SỔ LỖI</button>
       <div class="nav-meta">Tuần ${dash.current_week} · Track ${isAim80 ? '8.0' : '6.5'} · Mục tiêu Band ${dash.settings.target_band.toFixed(1)}</div>
     </div>
@@ -1771,7 +1775,15 @@ function renderApp() {
                 </table>
               </div>`
                 : `
-              <div class="log-table-wrap" style="max-height:390px;">
+              <div style="display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap;">
+                <input class="text-input" id="paraQTerm" placeholder="Từ câu hỏi" style="flex:1;min-width:95px;" />
+                <input class="text-input" id="paraPassage" placeholder="Trong bài đọc" style="flex:1;min-width:110px;" />
+                <input class="text-input" id="paraSource" placeholder="Cam / Study4" style="width:110px;" />
+                <input class="text-input" id="paraTrap" placeholder="Ghi chú / Bẫy" style="flex:1;min-width:100px;" />
+                <button type="button" class="btn btn-sm btn-primary" id="addParaBtn">+ THÊM</button>
+              </div>
+              ${paraFormMsg ? `<div class="status-msg ${paraFormErr ? 'err' : 'ok'}" style="margin-bottom:6px;">${esc(paraFormMsg)}</div>` : ''}
+              <div class="log-table-wrap" style="max-height:360px;">
                 <table class="para-table">
                   <colgroup>
                     <col style="width:22%" />
@@ -1799,21 +1811,9 @@ function renderApp() {
                       </tr>`
                       )
                       .join('')}
-                    <tr class="addrow">
-                      <td><input id="paraQTerm" placeholder="Từ câu hỏi" /></td>
-                      <td><input id="paraPassage" placeholder="Trong bài đọc" /></td>
-                      <td><input id="paraSource" placeholder="Cam / Study4" /></td>
-                      <td>
-                        <div class="row" style="gap:4px;">
-                          <input id="paraTrap" placeholder="Ghi chú / Bẫy" />
-                          <button type="button" class="btn btn-primary ibtn" id="addParaBtn" title="Thêm dòng">+</button>
-                        </div>
-                      </td>
-                    </tr>
                   </tbody>
                 </table>
               </div>
-              ${paraFormMsg ? `<div class="status-msg ${paraFormErr ? 'err' : 'ok'}" style="margin-top:6px;">${esc(paraFormMsg)}</div>` : ''}
               <div class="small muted" style="margin-top:6px;">Các cặp Paraphrase tự động nuôi vào câu hỏi Micro-Check 2 phút.</div>`
             }
           </div>
@@ -2155,6 +2155,7 @@ function bindEvents() {
 
   document.querySelectorAll<HTMLButtonElement>('.nav-tab').forEach((btn) => {
     btn.onclick = () => {
+      window.speechSynthesis?.cancel();
       activeTab = btn.dataset.tab as typeof activeTab;
       renderApp();
     };
@@ -2312,6 +2313,7 @@ function bindEvents() {
   // Tab 3: Sub-modes & Flashcard
   document.querySelectorAll<HTMLButtonElement>('[data-vsub]').forEach((btn) => {
     btn.onclick = async () => {
+      window.speechSynthesis?.cancel();
       vocabSubMode = btn.dataset.vsub as typeof vocabSubMode;
       if (vocabSubMode === 'dictation' && !dictationBatch.length) {
         dictationBatch = await invoke<DictationSentence[]>('get_dictation_batch', { count: 5 });
@@ -2333,7 +2335,10 @@ function bindEvents() {
   if (leechChip) {
     leechChip.onclick = async () => {
       onlyLeechFilter = !onlyLeechFilter;
-      dueCards = await invoke<VocabCard[]>('get_due_vocab', { onlyLeech: onlyLeechFilter });
+      [dueCards, dash] = await Promise.all([
+        invoke<VocabCard[]>('get_due_vocab', { onlyLeech: onlyLeechFilter }),
+        invoke<DashboardState>('get_dashboard'),
+      ]);
       cardIdx = 0;
       cardFlipped = false;
       renderApp();
@@ -2344,7 +2349,10 @@ function bindEvents() {
   if (clearLeechFilterBtn) {
     clearLeechFilterBtn.onclick = async () => {
       onlyLeechFilter = false;
-      dueCards = await invoke<VocabCard[]>('get_due_vocab', { onlyLeech: false });
+      [dueCards, dash] = await Promise.all([
+        invoke<VocabCard[]>('get_due_vocab', { onlyLeech: false }),
+        invoke<DashboardState>('get_dashboard'),
+      ]);
       cardIdx = 0;
       cardFlipped = false;
       renderApp();
@@ -2966,6 +2974,9 @@ function bindEvents() {
       finishCurrentRecordingClip();
     }
     stopMediaRecorderIfActive();
+    studioPlaybackAudio?.pause();
+    studioPlaybackAudio = null;
+    revokeRecordedBlobs();
     studioOpen = false;
     renderApp();
   };
@@ -3650,6 +3661,9 @@ document.addEventListener('keydown', (e) => {
         finishCurrentRecordingClip();
       }
       stopMediaRecorderIfActive();
+      studioPlaybackAudio?.pause();
+      studioPlaybackAudio = null;
+      revokeRecordedBlobs();
       studioOpen = false;
       renderApp();
     }

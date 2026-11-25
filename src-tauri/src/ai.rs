@@ -322,6 +322,26 @@ Rules:
     Ok((grade, label))
 }
 
+pub(crate) fn validate_audio_mime_type(mime_type: &str) -> Result<&str, String> {
+    let trimmed = mime_type.trim();
+    if trimmed.is_empty() {
+        return Ok("audio/webm");
+    }
+    let base = trimmed
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    match base.as_str() {
+        "audio/webm" | "audio/ogg" | "audio/mpeg" | "audio/mp4" | "audio/wav" => Ok(trimmed),
+        _ => Err(format!(
+            "Định dạng âm thanh không được hỗ trợ: {}. Chỉ chấp nhận audio/webm, audio/ogg, audio/mpeg, audio/mp4, audio/wav.",
+            trimmed
+        )),
+    }
+}
+
 pub async fn grade_speaking_audio_with_gemini(
     api_key: &str,
     preferred_model: &str,
@@ -352,11 +372,7 @@ pub async fn grade_speaking_audio_with_gemini(
         }
     }
 
-    let safe_mime = if mime_type.trim().is_empty() {
-        "audio/webm"
-    } else {
-        mime_type.trim()
-    };
+    let safe_mime = validate_audio_mime_type(mime_type)?;
     let p3_text = part3_questions
         .iter()
         .enumerate()
@@ -599,5 +615,23 @@ mod tests {
         let rules = build_focus_rules(&notes);
         assert!(rules.contains("Điểm yếu 1: Lỗi mạo từ"));
         assert!(rules.contains("Điểm yếu 2: Comma splice"));
+    }
+
+    #[test]
+    fn validate_audio_mime_type_enforces_whitelist() {
+        assert_eq!(validate_audio_mime_type("").unwrap(), "audio/webm");
+        assert_eq!(
+            validate_audio_mime_type("audio/webm;codecs=opus").unwrap(),
+            "audio/webm;codecs=opus"
+        );
+        assert_eq!(validate_audio_mime_type(" AUDIO/OGG ").unwrap(), "AUDIO/OGG");
+        assert_eq!(validate_audio_mime_type("audio/mpeg").unwrap(), "audio/mpeg");
+        assert_eq!(validate_audio_mime_type("audio/mp4").unwrap(), "audio/mp4");
+        assert_eq!(validate_audio_mime_type("audio/wav").unwrap(), "audio/wav");
+
+        assert!(validate_audio_mime_type("text/plain").is_err());
+        assert!(validate_audio_mime_type("image/png").is_err());
+        assert!(validate_audio_mime_type("audio/x-evil").is_err());
+        assert!(validate_audio_mime_type("application/octet-stream").is_err());
     }
 }

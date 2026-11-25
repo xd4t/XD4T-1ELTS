@@ -3530,4 +3530,376 @@ mod tests {
         assert!(dash.roadmap[0].done); // Week 1 done preserved!
         assert!(dash.paraphrase_pairs.len() >= 6);
     }
+
+    #[test]
+    fn seed_key_file_is_imported_and_deleted() {
+        let temp_dir = std::env::temp_dir().join("xd4t_seed_test");
+        fs::create_dir_all(&temp_dir).unwrap();
+        let seed_file = temp_dir.join("test_api_key.seed");
+        fs::write(&seed_file, "AQ.TestDummyKey123456").unwrap();
+
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema_and_seed(&conn, Some(&seed_file)).unwrap();
+
+        assert!(!seed_file.exists());
+        let s = get_settings_raw(&conn).unwrap();
+        assert_eq!(s.gemini_api_key, "AQ.TestDummyKey123456");
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn quest_toggle_updates_study_days_and_streak() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema_and_seed(&conn, None).unwrap();
+        let dash = get_dashboard_state(&conn).unwrap();
+        assert_eq!(dash.streak, 0);
+
+        let core_quest = dash
+            .quests
+            .iter()
+            .find(|q| q.tier == "core" && q.minutes >= 10)
+            .unwrap();
+        let core_id = core_quest.id;
+        toggle_quest(&conn, core_id).unwrap();
+
+        let dash2 = get_dashboard_state(&conn).unwrap();
+        assert_eq!(dash2.streak, 1);
+        assert!(dash2.quests.iter().find(|q| q.id == core_id).unwrap().done);
+    }
+
+    #[test]
+    fn error_log_increments_duplicate_entries() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema_and_seed(&conn, None).unwrap();
+        upsert_error_log(&conn, "Grammar", "he go", "he goes").unwrap();
+        upsert_error_log(&conn, "Grammar", "he go", "he goes").unwrap();
+        let cnt: i64 = conn
+            .query_row(
+                "SELECT count FROM error_logs WHERE wrong_text = 'he go'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(cnt, 2);
+    }
+
+    #[test]
+    fn widget_status_builds_expected_baseline() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema_and_seed(&conn, None).unwrap();
+        let ws = build_widget_status(&conn).unwrap();
+        assert_eq!(ws.quests_done, 0);
+        assert_eq!(ws.quests_total, 3);
+        assert_eq!(ws.overall_band, 5.0);
+        assert_eq!(ws.target_band, 7.0);
+    }
+
+    #[test]
+    fn import_and_export_roadmap_roundtrip() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema_and_seed(&conn, None).unwrap();
+
+        let md = crate::roadmap_parser::get_sample_roadmap_md();
+        import_roadmap_to_db(&conn, &md, true, true).unwrap();
+
+        let dash = get_dashboard_state(&conn).unwrap();
+        assert_eq!(dash.settings.exam_date, "2027-05-15");
+        assert_eq!(dash.settings.writing_checklist.len(), 5);
+        assert_eq!(dash.settings.writing_focus_notes.len(), 3);
+        assert!(dash.roadmap.len() >= 6);
+        assert!(dash.quests.len() >= 3);
+        assert!(dash.total_vocab_count >= 40);
+
+        let exported = export_roadmap_markdown(&conn).unwrap();
+        assert!(exported.contains("## Nhiệm vụ Core"));
+        assert!(exported.contains("## Checklist Writing cá nhân"));
+        assert!(exported.contains("### GĐ1:"));
+    }
+
+    #[test]
+    fn new_db_defaults_to_pastel_male_and_onboarding_false() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema_and_seed(&conn, None).unwrap();
+        let s = get_settings_public(&conn).unwrap();
+        assert_eq!(s.theme, "pastel-male");
+        assert!(!s.onboarding_done);
+        let ws = build_widget_status(&conn).unwrap();
+        assert_eq!(ws.theme, "pastel-male");
+    }
+
+    #[test]
+    fn legacy_db_migrates_dark_light_and_onboarding_done() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                theme TEXT NOT NULL DEFAULT 'dark',
+                gemini_api_key TEXT NOT NULL DEFAULT '',
+                gemini_model TEXT NOT NULL DEFAULT 'gemini-3-flash-preview',
+                exam_date TEXT NOT NULL DEFAULT '2027-05-15',
+                reminder_time TEXT NOT NULL DEFAULT '21:00',
+                autostart INTEGER NOT NULL DEFAULT 0,
+                target_band REAL NOT NULL DEFAULT 7.0
+            );
+            INSERT INTO settings (id, theme, gemini_api_key) VALUES (1, 'dark', 'AQ.TestLegacyKey');",
+        )
+        .unwrap();
+
+        init_schema_and_seed(&conn, None).unwrap();
+        let s = get_settings_public(&conn).unwrap();
+        assert_eq!(s.theme, "mono-dark");
+        assert!(s.onboarding_done);
+
+        let updated = update_settings(
+            &conn,
+            Some("light".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(updated.theme, "mono-light");
+    }
+
+    #[test]
+    fn backup_and_restore_validation_checks_integrity_and_schema() {
+        let temp_dir = std::env::temp_dir().join("xd4t_backup_test");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let src_db = temp_dir.join("src.db");
+        let bak_db = temp_dir.join("bak.db");
+        let bad_db = temp_dir.join("bad.db");
+        let wrong_db = temp_dir.join("wrong.db");
+
+        {
+            let conn = Connection::open(&src_db).unwrap();
+            init_schema_and_seed(&conn, None).unwrap();
+            checkpoint_and_copy_backup(&conn, &src_db, &bak_db).unwrap();
+        }
+        validate_backup_file(&bak_db).unwrap();
+
+        fs::write(&bad_db, b"not a sqlite file").unwrap();
+        assert!(validate_backup_file(&bad_db).is_err());
+
+        {
+            let wrong = Connection::open(&wrong_db).unwrap();
+            wrong.execute("CREATE TABLE unrelated (id INTEGER PRIMARY KEY)", []).unwrap();
+        }
+        assert!(validate_backup_file(&wrong_db).is_err());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn set_study_level_switches_between_65_and_80_cleanly() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema_and_seed(&conn, None).unwrap();
+
+        let d0 = get_dashboard_state(&conn).unwrap();
+        assert_eq!(d0.settings.target_band, 7.0);
+        assert_eq!(d0.total_vocab_count, 40);
+        assert_eq!(d0.error_logs.len(), 10);
+        // Mark Tuần 1 done before switching
+        toggle_roadmap_item(&conn, d0.roadmap[0].id).unwrap();
+
+        let d80 = set_study_level(&conn, "8.0").unwrap();
+        assert_eq!(d80.settings.target_band, 8.0);
+        assert_eq!(d80.total_vocab_count, 40);
+        assert_eq!(d80.roadmap.len(), 24);
+        assert!(d80.roadmap[0].done); // Preserved!
+        assert!(!d80.roadmap[0].title.starts_with('['));
+        assert_eq!(d80.skill_bands[0].target, 8.5);
+        assert_eq!(d80.skill_bands[1].target, 8.5);
+        assert_eq!(d80.skill_bands[2].target, 7.5);
+        assert_eq!(d80.skill_bands[3].target, 7.5);
+        assert_eq!(d80.skill_bands[0].current, 7.0); // Fresh DB baseline for 8.0
+        assert_eq!(d80.error_logs.len(), 10);
+        assert!(ERROR_LOG_SEEDS_80.iter().any(|e| e.wrong_text == d80.error_logs[0].wrong_text));
+
+        let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
+        let due_80 = get_due_vocab(&conn, &today, None).unwrap();
+        assert!(!due_80.is_empty());
+        assert!(VOCAB_SEEDS_80.iter().any(|v| v.word == due_80[0].word));
+
+        // Review first C1-C2 card so reps > 0, and add a custom error log
+        review_vocab_card(&conn, due_80[0].id, 3, Local::now().date_naive()).unwrap();
+        upsert_error_log(&conn, "Custom", "my wrong", "my right").unwrap();
+
+        // Switching to 8.0 again does not duplicate vocab cards
+        let d80_again = set_study_level(&conn, "8.0").unwrap();
+        assert_eq!(d80_again.total_vocab_count, 40);
+
+        // User enters a real practice score, then switches back to 6.5 -> score, studied card, and custom error preserved!
+        add_practice_score(&conn, "Reading", "Cam 16 T1", 8.0, "35/40").unwrap();
+        let d65 = set_study_level(&conn, "6.5").unwrap();
+        assert_eq!(d65.settings.target_band, 7.0);
+        assert_eq!(d65.skill_bands[1].target, 7.0);
+        assert_eq!(d65.skill_bands[1].current, 8.0); // User score preserved!
+        assert!(d65.roadmap[0].done);
+        assert_eq!(d65.total_vocab_count, 41); // 40 Band 6.5 + 1 studied Band 8.0 card
+        assert!(d65.error_logs.iter().any(|e| e.wrong_text == "my wrong"));
+    }
+
+    #[test]
+    fn weekday_quest_rotation_covers_all_7_days_for_both_tracks() {
+        for is_80 in [false, true] {
+            let mut titles = std::collections::HashSet::new();
+            for wd in [
+                Weekday::Mon,
+                Weekday::Tue,
+                Weekday::Wed,
+                Weekday::Thu,
+                Weekday::Fri,
+                Weekday::Sat,
+                Weekday::Sun,
+            ] {
+                let q = default_quests_for_weekday(wd, is_80);
+                let expected_len = if matches!(wd, Weekday::Sun) { 3 } else { 4 };
+                assert_eq!(q.len(), expected_len);
+                let main_core = q.iter().filter(|x| x.tier == "core").last().unwrap();
+                titles.insert(main_core.title);
+            }
+            assert_eq!(titles.len(), 7);
+        }
+    }
+
+    #[test]
+    fn generate_vocab_quiz_supports_all_three_modes() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema_and_seed(&conn, None).unwrap();
+
+        let assert_clean_question = |q: &QuizQuestion| {
+            assert!(!q.word.contains(" vs "), "word leaked vs note: {}", q.word);
+            assert!(!q.word.contains(" / "), "word leaked slash note: {}", q.word);
+            assert!(!q.word.contains('('), "word leaked paren note: {}", q.word);
+            assert!(
+                !q.meaning.to_lowercase().contains(&q.word.trim().to_lowercase()),
+                "meaning leaked answer '{}' in '{}'",
+                q.word,
+                q.meaning
+            );
+            for opt in &q.options {
+                assert!(!opt.contains(" vs "), "option leaked vs note: {}", opt);
+                assert!(!opt.contains(" / "), "option leaked slash note: {}", opt);
+                assert!(!opt.contains('('), "option leaked paren note: {}", opt);
+            }
+            if q.question_type == "meaning_mcq" {
+                assert!(q.cloze_sentence.is_none());
+            } else if q.question_type == "cloze_mcq" {
+                assert!(q.cloze_sentence.is_some());
+            }
+        };
+
+        let mixed = generate_vocab_quiz(&conn, Some(10), Some("mixed".to_string())).unwrap();
+        assert_eq!(mixed.len(), 10);
+        let typing_n = mixed.iter().filter(|q| q.question_type == "typing").count();
+        let mcq_n = mixed.len() - typing_n;
+        assert_eq!(typing_n, 3);
+        assert_eq!(mcq_n, 7);
+        for q in &mixed {
+            assert_clean_question(q);
+        }
+
+        let mcq = generate_vocab_quiz(&conn, Some(10), Some("mcq".to_string())).unwrap();
+        assert_eq!(mcq.len(), 10);
+        for q in &mcq {
+            assert_clean_question(q);
+            assert!(q.question_type == "meaning_mcq" || q.question_type == "cloze_mcq");
+            assert_eq!(q.options.len(), 4);
+            assert!(q.options.contains(&q.word));
+            let uniq: std::collections::HashSet<&String> = q.options.iter().collect();
+            assert_eq!(uniq.len(), 4);
+        }
+
+        let typing = generate_vocab_quiz(&conn, Some(5), Some("typing".to_string())).unwrap();
+        assert_eq!(typing.len(), 5);
+        for q in &typing {
+            assert_clean_question(q);
+            assert_eq!(q.question_type, "typing");
+            assert!(q.options.is_empty());
+            assert!(!q.hint.is_empty());
+        }
+    }
+
+    #[test]
+    fn submit_vocab_quiz_requeues_forgotten_cards_and_ticks_quiz_quest() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema_and_seed(&conn, None).unwrap();
+
+        let today = Local::now().date_naive();
+        let today_str = today.format("%Y-%m-%d").to_string();
+
+        // Insert a Quiz quest for today so we can verify auto-tick
+        conn.execute(
+            "INSERT INTO daily_quests (date, track, title, meta, minutes, done)
+             VALUES (?1, 'ielts', 'Quiz kiểm tra 10 từ vựng định kỳ', 'Test', 5, 0)",
+            params![today_str],
+        )
+        .unwrap();
+
+        let quiz = generate_vocab_quiz(&conn, Some(4), Some("mcq".to_string())).unwrap();
+        assert_eq!(quiz.len(), 4);
+
+        // Mark first card as already learned (reps = 3, due in future) so we prove forgetting resets it
+        let future_date = (today + Duration::days(10)).format("%Y-%m-%d").to_string();
+        conn.execute(
+            "UPDATE vocab_cards SET reps = 3, interval_days = 10, ease = 2.5, due_date = ?1 WHERE id = ?2",
+            params![future_date, quiz[0].card_id],
+        )
+        .unwrap();
+
+        let inputs = vec![
+            QuizAnswerInput { card_id: quiz[0].card_id, correct: false, gave_up: false },
+            QuizAnswerInput { card_id: quiz[1].card_id, correct: true, gave_up: true }, // gave_up counts as forgotten
+            QuizAnswerInput { card_id: quiz[2].card_id, correct: true, gave_up: false },
+            QuizAnswerInput { card_id: quiz[3].card_id, correct: true, gave_up: false },
+        ];
+
+        let res = submit_vocab_quiz(&conn, "mcq".to_string(), inputs, today).unwrap();
+        assert_eq!(res.total_questions, 4);
+        assert_eq!(res.correct_count, 2);
+        assert_eq!(res.accuracy_pct, 50);
+        assert_eq!(res.forgotten_cards.len(), 2);
+        assert!(res.marked_quest_done);
+
+        // Verify forgotten card 0 was reset and appears at the head of get_due_vocab
+        let (reps0, interval0, ease0, due0): (i64, i64, f64, String) = conn
+            .query_row(
+                "SELECT reps, interval_days, ease, due_date FROM vocab_cards WHERE id = ?1",
+                params![quiz[0].card_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(reps0, 0);
+        assert_eq!(interval0, 0);
+        assert!(ease0 < 2.5);
+        assert_eq!(due0, today_str);
+
+        let due_list = get_due_vocab(&conn, &today_str, None).unwrap();
+        let top_ids: Vec<i64> = due_list.iter().take(2).map(|c| c.id).collect();
+        assert!(top_ids.contains(&quiz[0].card_id));
+        assert!(top_ids.contains(&quiz[1].card_id));
+
+        // Verify vocab_quizzes row saved
+        let q_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM vocab_quizzes", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(q_count, 1);
+
+        // Verify daily_quests quiz row marked done = 1
+        let quest_done: i64 = conn
+            .query_row(
+                "SELECT done FROM daily_quests WHERE date = ?1 AND lower(title) LIKE '%quiz%' LIMIT 1",
+                params![today_str],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(quest_done, 1);
+    }
 }
