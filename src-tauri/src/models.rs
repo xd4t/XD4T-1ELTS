@@ -263,6 +263,12 @@ pub struct ErrorFixQuestion {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorFixAiGrade {
+    pub correct: bool,
+    pub feedback: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MicroCheckItem {
     pub item_type: String,
     pub ref_id: i64,

@@ -1,4 +1,4 @@
-use crate::models::{ErrorLog, GradeResult, SpeakingAiPayload};
+use crate::models::{ErrorFixAiGrade, ErrorLog, GradeResult, SpeakingAiPayload};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -525,6 +525,71 @@ pub async fn test_gemini_connection_live(
     })
 }
 
+pub fn parse_error_fix_ai_response(raw_text: &str) -> Result<ErrorFixAiGrade, String> {
+    let cleaned = raw_text
+        .trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+
+    let start = cleaned.find('{').unwrap_or(0);
+    let end = cleaned.rfind('}').map(|i| i + 1).unwrap_or(cleaned.len());
+    let slice = &cleaned[start..end];
+
+    serde_json::from_str::<ErrorFixAiGrade>(slice)
+        .map_err(|e| format!("Không parse được JSON chấm sửa lỗi từ AI: {e}"))
+}
+
+pub async fn grade_error_fix_with_gemini(
+    api_key: &str,
+    preferred_model: &str,
+    wrong_text: &str,
+    expected_text: &str,
+    user_answer: &str,
+) -> Result<ErrorFixAiGrade, String> {
+    let key = api_key.trim();
+    if key.is_empty() {
+        return Err("Chưa có Gemini API Key trong Cài đặt.".to_string());
+    }
+    if user_answer.trim().is_empty() {
+        return Err("Bạn chưa nhập câu sửa để AI chấm.".to_string());
+    }
+
+    let prompt = format!(
+        "Bạn là giám khảo IELTS. Người học đang sửa lỗi ngữ pháp/từ vựng.\n\
+         - Câu/cụm sai: {wrong_text}\n\
+         - Đáp án tham khảo: {expected_text}\n\
+         - Câu sửa của người học: {user_answer}\n\n\
+         Hãy đánh giá câu sửa của người học đã đúng ngữ pháp, giữ đúng ý sửa lỗi và đạt chuẩn IELTS chưa (chấp nhận từ đồng nghĩa hoặc cách diễn đạt khác tương đương). \
+         Trả về DUY NHẤT 1 JSON object không có markdown:\n\
+         {{\"correct\": true/false, \"feedback\": \"1 câu nhận xét ngắn gọn bằng tiếng Việt\"}}"
+    );
+
+    let payload = json!({
+        "contents": [{
+            "role": "user",
+            "parts": [{ "text": prompt }]
+        }],
+        "generationConfig": {
+            "temperature": 0.1,
+            "maxOutputTokens": 256,
+            "responseMimeType": "application/json"
+        }
+    });
+
+    let (text, _label) = post_gemini_json(
+        key,
+        preferred_model,
+        &payload,
+        25,
+        "Không thể nhờ AI chấm câu sửa lúc này",
+    )
+    .await?;
+
+    parse_error_fix_ai_response(&text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -633,5 +698,19 @@ mod tests {
         assert!(validate_audio_mime_type("image/png").is_err());
         assert!(validate_audio_mime_type("audio/x-evil").is_err());
         assert!(validate_audio_mime_type("application/octet-stream").is_err());
+    }
+
+    #[test]
+    fn parse_error_fix_ai_response_parses_valid_and_fenced_json() {
+        let raw = r#"```json
+        {"correct": true, "feedback": "Câu sửa đúng ngữ pháp và tự nhiên theo chuẩn IELTS."}
+        ```"#;
+        let parsed = parse_error_fix_ai_response(raw).unwrap();
+        assert!(parsed.correct);
+        assert!(parsed.feedback.contains("đúng ngữ pháp"));
+
+        let raw_false = r#"{"correct": false, "feedback": "Thiếu chia số nhiều ở danh từ."}"#;
+        let parsed_false = parse_error_fix_ai_response(raw_false).unwrap();
+        assert!(!parsed_false.correct);
     }
 }

@@ -316,6 +316,11 @@ export interface SpeakingGradeResponse {
   marked_quest_done: boolean;
 }
 
+export interface ErrorFixAiGrade {
+  correct: boolean;
+  feedback: string;
+}
+
 export interface DashboardState {
   settings: SettingsPublic;
   streak: number;

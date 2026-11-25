@@ -7,8 +7,8 @@ import donateQrUrl from './assets/donate-qr.png';
 import {
   computeWordDiff,
   esc,
+  evaluateErrorFixAnswer,
   initTtsVoices,
-  isErrorFixMatch,
   isTtsSupported,
   speakText,
 } from './diff';
@@ -19,6 +19,7 @@ import type {
   DictationResultInput,
   DictationSentence,
   DictationSubmitResult,
+  ErrorFixAiGrade,
   ErrorFixQuestion,
   GradeResponseDto,
   GradeResult,
@@ -143,11 +144,22 @@ let quizLoading = false;
 let quizSubmitting = false;
 let quizErrorMsg = '';
 
+type ErrorFixFeedbackState = {
+  correct: boolean;
+  target: string;
+  matchReason?: string;
+  diffHtml?: string;
+  selfAccepted?: boolean;
+  aiChecking?: boolean;
+  aiFeedback?: string;
+  aiError?: string;
+};
+
 // Error Fix Quiz State
 let errorFixQuestions: ErrorFixQuestion[] = [];
 let errorFixIdx = 0;
 let errorFixInput = '';
-let errorFixFeedback: { correct: boolean; target: string } | null = null;
+let errorFixFeedback: ErrorFixFeedbackState | null = null;
 let errorFixCorrectCount = 0;
 let errorFixDone = false;
 
@@ -156,7 +168,11 @@ let microQuestions: MicroCheckItem[] = [];
 let microIdx = 0;
 let microAnswers: MicroCheckAnswerInput[] = [];
 let microInput = '';
-let microFeedback: { correct: boolean; gaveUp: boolean; target: string; note: string } | null = null;
+let microFeedback: (ErrorFixFeedbackState & {
+  gaveUp: boolean;
+  note: string;
+  isErrorFix?: boolean;
+}) | null = null;
 let microSummary: MicroCheckSubmitResult | null = null;
 let microSecsLeft = 120;
 let microTimer: number | null = null;
@@ -731,6 +747,52 @@ function renderFlashcardMode(curTheme: ThemeId): string {
     </div>`;
 }
 
+function buildBestWordDiffHtml(
+  userInput: string,
+  variants: string[],
+  fallbackTarget: string
+): string {
+  const candidates = variants.length > 0 ? variants : [fallbackTarget];
+  let best = computeWordDiff(userInput, candidates[0]);
+  for (let i = 1; i < candidates.length; i++) {
+    const cur = computeWordDiff(userInput, candidates[i]);
+    if (cur.pct > best.pct) best = cur;
+  }
+  return best.tokens
+    .map((t) =>
+      t.kind === 'ok'
+        ? `<span class="w-ok">${esc(t.word)}</span>`
+        : t.kind === 'miss'
+          ? `<span class="w-fix">${esc(t.word)}</span>`
+          : `<span class="w-bad">${esc(t.word)}</span>`
+    )
+    .join(' ');
+}
+
+function renderErrorFixFallbackBlock(
+  fb: ErrorFixFeedbackState,
+  selfBtnId: string,
+  aiBtnId: string
+): string {
+  const hasKey = Boolean(dash?.settings.has_api_key);
+  return `
+    ${fb.diffHtml ? `<div class="diff-box" style="margin-top:8px;font-size:14px;line-height:1.7;padding:8px 10px;">${fb.diffHtml}</div>` : ''}
+    ${fb.aiFeedback ? `<div class="small" style="margin-top:6px;"><b>AI nhận xét:</b> ${esc(fb.aiFeedback)}</div>` : ''}
+    ${fb.aiError ? `<div class="small" style="margin-top:6px;color:var(--m-err);">${esc(fb.aiError)}</div>` : ''}
+    ${
+      !fb.correct
+        ? `<div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap;">
+            <button type="button" class="btn btn-sm" id="${selfBtnId}">✓ Tôi sửa đúng nghĩa (Tính đúng)</button>
+            ${
+              hasKey
+                ? `<button type="button" class="btn btn-sm" id="${aiBtnId}" ${fb.aiChecking ? 'disabled' : ''}>${fb.aiChecking ? '⏳ Đang nhờ AI chấm...' : '✨ Nhờ AI chấm câu sửa'}</button>`
+                : ''
+            }
+          </div>`
+        : ''
+    }`;
+}
+
 function renderErrorFixQuiz(): string {
   if (errorFixDone) {
     const tot = errorFixQuestions.length || 1;
@@ -766,8 +828,8 @@ function renderErrorFixQuiz(): string {
       <div style="font-size:16px;margin:4px 0 12px;"><s style="color:var(--m-err);">${esc(q.wrong_text)}</s></div>
       <div class="label-uc" style="margin-bottom:4px;">Gõ lại cụm / câu sửa chuẩn</div>
       <textarea class="text-input" id="errFixInput" rows="2" style="width:100%;font-size:14px;" placeholder="Nhập cách sửa đúng..." ${errorFixFeedback ? 'disabled' : ''}>${esc(errorFixInput)}</textarea>
-      <div class="row" style="justify-content:space-between;margin-top:8px;flex-wrap:wrap;">
-        <span class="small muted">So khớp linh hoạt (bỏ hoa/thường, dấu câu, khoảng trắng thừa)</span>
+      <div class="row" style="justify-content:space-between;margin-top:8px;flex-wrap:wrap;gap:8px;">
+        <span class="small muted">Gõ lại đúng câu/cụm đã sửa (nếu đáp án có nhiều lựa chọn như A/B, chỉ cần gõ 1 cách đúng).</span>
         ${
           !errorFixFeedback
             ? `<button type="button" class="btn btn-primary" id="checkErrFixBtn">Kiểm tra <kbd style="color:inherit;border-color:currentColor;">Enter</kbd></button>`
@@ -777,7 +839,10 @@ function renderErrorFixQuiz(): string {
       ${
         errorFixFeedback
           ? `<div class="quiz-feedback ${errorFixFeedback.correct ? 'ok' : 'err'}">
-              <b>${errorFixFeedback.correct ? '✓ Chính xác!' : '✗ Chưa khớp hoàn toàn'}</b> — Đáp án chuẩn: <b>${esc(errorFixFeedback.target)}</b>
+              <div>
+                <b>${errorFixFeedback.correct ? '✓ Chính xác!' : '✗ Chưa khớp hoàn toàn'}</b>${errorFixFeedback.matchReason ? ` <span class="small muted">(${esc(errorFixFeedback.matchReason)})</span>` : ''} — Đáp án chuẩn: <b>${esc(errorFixFeedback.target)}</b>
+              </div>
+              ${renderErrorFixFallbackBlock(errorFixFeedback, 'errFixSelfAcceptBtn', 'errFixAiGradeBtn')}
             </div>`
           : ''
       }
@@ -846,8 +911,13 @@ function renderMicroCheck(): string {
       ${
         microFeedback
           ? `<div class="quiz-feedback ${microFeedback.correct ? 'ok' : 'err'}">
-              <div><b>${microFeedback.correct ? '✓ Chính xác!' : microFeedback.gaveUp ? '↺ Đã đẩy về SRS' : '✗ Chưa khớp'}</b> — Đáp án: <b>${esc(microFeedback.target)}</b></div>
+              <div><b>${microFeedback.correct ? '✓ Chính xác!' : microFeedback.gaveUp ? '↺ Đã đẩy về SRS' : '✗ Chưa khớp'}</b>${microFeedback.matchReason ? ` <span class="small muted">(${esc(microFeedback.matchReason)})</span>` : ''} — Đáp án: <b>${esc(microFeedback.target)}</b></div>
               ${microFeedback.note ? `<div class="small muted" style="margin-top:3px;">${esc(microFeedback.note)}</div>` : ''}
+              ${
+                microFeedback.isErrorFix && !microFeedback.gaveUp
+                  ? renderErrorFixFallbackBlock(microFeedback, 'microSelfAcceptBtn', 'microAiGradeBtn')
+                  : ''
+              }
               <div style="margin-top:8px;"><button type="button" class="btn btn-primary btn-sm" id="microNextBtn">${microIdx + 1 >= tot ? 'Hoàn thành Micro-Check →' : 'Câu tiếp →'}</button></div>
             </div>`
           : ''
@@ -2556,9 +2626,14 @@ function bindEvents() {
     const q = errorFixQuestions[errorFixIdx];
     if (!q || errorFixFeedback || !errFixIn) return;
     errorFixInput = errFixIn.value;
-    const ok = isErrorFixMatch(errorFixInput, q.right_text);
-    if (ok) errorFixCorrectCount += 1;
-    errorFixFeedback = { correct: ok, target: q.right_text };
+    const evalRes = evaluateErrorFixAnswer(errorFixInput, q.wrong_text, q.right_text);
+    if (evalRes.matched) errorFixCorrectCount += 1;
+    errorFixFeedback = {
+      correct: evalRes.matched,
+      target: q.right_text,
+      matchReason: evalRes.matchReason,
+      diffHtml: evalRes.matched ? undefined : buildBestWordDiffHtml(errorFixInput, evalRes.variants, q.right_text),
+    };
     renderApp();
   };
   if (errFixIn) {
@@ -2573,6 +2648,43 @@ function bindEvents() {
     };
   }
   document.getElementById('checkErrFixBtn')?.addEventListener('click', submitErrFix);
+  document.getElementById('errFixSelfAcceptBtn')?.addEventListener('click', () => {
+    if (!errorFixFeedback || errorFixFeedback.correct) return;
+    errorFixFeedback.correct = true;
+    errorFixFeedback.selfAccepted = true;
+    errorFixFeedback.matchReason = 'Tự xác nhận đúng nghĩa';
+    errorFixCorrectCount += 1;
+    renderApp();
+  });
+  document.getElementById('errFixAiGradeBtn')?.addEventListener('click', async () => {
+    const q = errorFixQuestions[errorFixIdx];
+    if (!q || !errorFixFeedback || errorFixFeedback.correct || errorFixFeedback.aiChecking) return;
+    errorFixFeedback.aiChecking = true;
+    errorFixFeedback.aiError = undefined;
+    renderApp();
+    try {
+      const res = await invoke<ErrorFixAiGrade>('grade_error_fix_with_ai', {
+        wrongText: q.wrong_text,
+        expectedText: q.right_text,
+        userAnswer: errorFixInput,
+      });
+      if (errorFixFeedback) {
+        errorFixFeedback.aiChecking = false;
+        errorFixFeedback.aiFeedback = res.feedback;
+        if (res.correct && !errorFixFeedback.correct) {
+          errorFixFeedback.correct = true;
+          errorFixFeedback.matchReason = 'AI xác nhận đúng';
+          errorFixCorrectCount += 1;
+        }
+      }
+    } catch (e) {
+      if (errorFixFeedback) {
+        errorFixFeedback.aiChecking = false;
+        errorFixFeedback.aiError = String(e);
+      }
+    }
+    renderApp();
+  });
   document.getElementById('nextErrFixBtn')?.addEventListener('click', () => {
     if (errorFixIdx + 1 >= errorFixQuestions.length) {
       errorFixDone = true;
@@ -2610,9 +2722,32 @@ function bindEvents() {
     if (!q || microFeedback) return;
     const val = microInEl?.value || '';
     microInput = val;
-    const ok = !gaveUp && (q.item_type === 'error_fix' ? isErrorFixMatch(val, q.answer_text) : isTypingAnswerMatch(val, q.answer_text));
+    let ok = false;
+    let matchReason: string | undefined;
+    let diffHtml: string | undefined;
+    const isErrFix = q.item_type === 'error_fix';
+    if (!gaveUp) {
+      if (isErrFix) {
+        const evalRes = evaluateErrorFixAnswer(val, q.prompt_text, q.answer_text);
+        ok = evalRes.matched;
+        matchReason = evalRes.matchReason;
+        if (!ok) {
+          diffHtml = buildBestWordDiffHtml(val, evalRes.variants, q.answer_text);
+        }
+      } else {
+        ok = isTypingAnswerMatch(val, q.answer_text);
+      }
+    }
     microAnswers.push({ item_type: q.item_type, ref_id: q.ref_id, correct: ok, gave_up: gaveUp });
-    microFeedback = { correct: ok, gaveUp, target: q.answer_text, note: q.meaning_or_note };
+    microFeedback = {
+      correct: ok,
+      gaveUp,
+      target: q.answer_text,
+      note: q.meaning_or_note,
+      matchReason,
+      diffHtml,
+      isErrorFix: isErrFix,
+    };
     renderApp();
   };
   if (microInEl) {
@@ -2628,6 +2763,45 @@ function bindEvents() {
   }
   document.getElementById('microCheckBtn')?.addEventListener('click', () => checkMicro(false));
   document.getElementById('microGiveUpBtn')?.addEventListener('click', () => checkMicro(true));
+  document.getElementById('microSelfAcceptBtn')?.addEventListener('click', () => {
+    if (!microFeedback || microFeedback.correct) return;
+    microFeedback.correct = true;
+    microFeedback.selfAccepted = true;
+    microFeedback.matchReason = 'Tự xác nhận đúng nghĩa';
+    const lastAns = microAnswers[microAnswers.length - 1];
+    if (lastAns) lastAns.correct = true;
+    renderApp();
+  });
+  document.getElementById('microAiGradeBtn')?.addEventListener('click', async () => {
+    const q = microQuestions[microIdx];
+    if (!q || !microFeedback || microFeedback.correct || microFeedback.aiChecking) return;
+    microFeedback.aiChecking = true;
+    microFeedback.aiError = undefined;
+    renderApp();
+    try {
+      const res = await invoke<ErrorFixAiGrade>('grade_error_fix_with_ai', {
+        wrongText: q.prompt_text,
+        expectedText: q.answer_text,
+        userAnswer: microInput,
+      });
+      if (microFeedback) {
+        microFeedback.aiChecking = false;
+        microFeedback.aiFeedback = res.feedback;
+        if (res.correct && !microFeedback.correct) {
+          microFeedback.correct = true;
+          microFeedback.matchReason = 'AI xác nhận đúng';
+          const lastAns = microAnswers[microAnswers.length - 1];
+          if (lastAns) lastAns.correct = true;
+        }
+      }
+    } catch (e) {
+      if (microFeedback) {
+        microFeedback.aiChecking = false;
+        microFeedback.aiError = String(e);
+      }
+    }
+    renderApp();
+  });
   document.getElementById('microNextBtn')?.addEventListener('click', async () => {
     if (microIdx + 1 >= microQuestions.length) {
       stopMicroTimer();

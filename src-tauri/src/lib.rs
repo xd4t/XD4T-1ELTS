@@ -20,9 +20,10 @@ use tauri_plugin_notification::NotificationExt;
 
 use crate::models::{
     Correction, DashboardState, DictationResultInput, DictationSentence, DictationSubmitResult,
-    ErrorFixQuestion, GradeResult, MicroCheckAnswerInput, MicroCheckItem, MicroCheckSubmitResult,
-    ParaphrasePair, QuizAnswerInput, QuizQuestion, QuizSubmitResult, SettingsPublic, SpeakingCue,
-    SpeakingErrorItem, SpeakingGradeResponse, SpeakingSession, VocabCard,
+    ErrorFixAiGrade, ErrorFixQuestion, GradeResult, MicroCheckAnswerInput, MicroCheckItem,
+    MicroCheckSubmitResult, ParaphrasePair, QuizAnswerInput, QuizQuestion, QuizSubmitResult,
+    SettingsPublic, SpeakingCue, SpeakingErrorItem, SpeakingGradeResponse, SpeakingSession,
+    VocabCard,
 };
 
 pub struct AppState {
@@ -385,6 +386,21 @@ fn save_speaking_manual_session(
 fn list_speaking_sessions(state: State<'_, AppState>) -> Result<Vec<SpeakingSession>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     db::list_speaking_sessions(&conn)
+}
+
+#[tauri::command]
+async fn grade_error_fix_with_ai(
+    state: State<'_, AppState>,
+    wrong_text: String,
+    expected_text: String,
+    user_answer: String,
+) -> Result<ErrorFixAiGrade, String> {
+    let (api_key, model) = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        let s = db::get_settings_raw(&conn)?;
+        (s.gemini_api_key, s.gemini_model)
+    };
+    ai::grade_error_fix_with_gemini(&api_key, &model, &wrong_text, &expected_text, &user_answer).await
 }
 
 #[tauri::command]
@@ -976,6 +992,7 @@ pub fn run() {
             generate_vocab_quiz,
             submit_vocab_quiz,
             generate_error_fix_quiz,
+            grade_error_fix_with_ai,
             generate_micro_check,
             submit_micro_check,
             get_dictation_batch,
