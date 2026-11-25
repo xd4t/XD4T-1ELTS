@@ -19,7 +19,8 @@ use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_notification::NotificationExt;
 
 use crate::models::{
-    Correction, DashboardState, GradeResult, SettingsPublic, VocabCard,
+    Correction, DashboardState, GradeResult, QuizAnswerInput, QuizQuestion, QuizSubmitResult,
+    SettingsPublic, VocabCard,
 };
 
 pub struct AppState {
@@ -75,6 +76,29 @@ fn review_vocab(
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let today = Local::now().date_naive();
     let res = db::review_vocab_card(&conn, card_id, quality, today)?;
+    let _ = db::write_widget_status(&conn);
+    Ok(res)
+}
+
+#[tauri::command]
+fn generate_vocab_quiz(
+    state: State<'_, AppState>,
+    count: Option<i64>,
+    mode: Option<String>,
+) -> Result<Vec<QuizQuestion>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::generate_vocab_quiz(&conn, count, mode)
+}
+
+#[tauri::command]
+fn submit_vocab_quiz(
+    state: State<'_, AppState>,
+    mode: String,
+    results: Vec<QuizAnswerInput>,
+) -> Result<QuizSubmitResult, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let today = Local::now().date_naive();
+    let res = db::submit_vocab_quiz(&conn, mode, results, today)?;
     let _ = db::write_widget_status(&conn);
     Ok(res)
 }
@@ -646,6 +670,8 @@ pub fn run() {
             add_pomodoro_minutes,
             get_due_vocab,
             review_vocab,
+            generate_vocab_quiz,
+            submit_vocab_quiz,
             grade_writing,
             save_corrections_to_errors,
             add_error_log,

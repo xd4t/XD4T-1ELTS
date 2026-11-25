@@ -1,6 +1,7 @@
 import './styles.css';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import donateQrUrl from './assets/donate-qr.png';
 import type {
@@ -9,6 +10,9 @@ import type {
   DashboardState,
   GradeResponseDto,
   GradeResult,
+  QuizAnswerInput,
+  QuizQuestion,
+  QuizSubmitResult,
   RestoreResultDto,
   RoadmapPreview,
   VocabCard,
@@ -84,6 +88,17 @@ let scrollToNewErr = false;
 let dueCards: VocabCard[] = [];
 let cardIdx = 0;
 let cardFlipped = false;
+let vocabSubMode: 'flashcard' | 'quiz' = 'flashcard';
+let quizMode: 'mixed' | 'mcq' | 'typing' = 'mixed';
+let quizPhase: 'setup' | 'playing' | 'summary' = 'setup';
+let quizQuestions: QuizQuestion[] = [];
+let quizIdx = 0;
+let quizAnswers: QuizAnswerInput[] = [];
+let quizFeedback: { correct: boolean; gaveUp: boolean; selectedOpt?: string; typedText?: string } | null = null;
+let quizSummary: QuizSubmitResult | null = null;
+let quizLoading = false;
+let quizErrorMsg = '';
+let lastSyncedWindowTitle = '';
 let draftEssay = '';
 
 let showApiKey = false;
@@ -165,10 +180,212 @@ function isAim80Mode(): boolean {
   return (dash?.settings.target_band ?? 7.0) >= 7.5;
 }
 
+function normalizeQuizWord(s: string): string {
+  return s
+    .toLowerCase()
+    .trim()
+    .replace(/[.,!?;:]+$/g, '')
+    .replace(/\s+/g, ' ');
+}
+
+function isTypingAnswerMatch(input: string, target: string): boolean {
+  const normIn = normalizeQuizWord(input);
+  if (!normIn) return false;
+  const normTarget = normalizeQuizWord(target);
+  if (normIn === normTarget) return true;
+  const primary = normalizeQuizWord(target.split('(')[0].split('/')[0]);
+  return Boolean(primary) && normIn === primary;
+}
+
+function renderClozeHtml(sentence: string): string {
+  return esc(sentence).replace('________', '<span class="quiz-blank">________</span>');
+}
+
+function renderQuizBox(): string {
+  if (!dash) return '';
+  const qs = dash.quiz_status;
+
+  if (quizPhase === 'setup') {
+    const lastText = qs.last_quiz_at
+      ? `${esc(qs.last_quiz_at)}${qs.last_quiz_score ? ` (${esc(qs.last_quiz_score)})` : ''}`
+      : 'Chưa làm bài nào';
+    return `
+      <div class="box">
+        <div class="box-title">
+          <span>QUIZ KIỂM TRA TRÍ NHỚ TỪ VỰNG (100% OFFLINE · TỰ ĐẨY TỪ QUÊN VỀ SRS)</span>
+          <span>${qs.quiz_due ? 'ĐẾN LỊCH KIỂM TRA' : 'SẴN SÀNG'}</span>
+        </div>
+        <div class="quiz-setup-stats">
+          <span>📅 Lần kiểm tra gần nhất: <b>${lastText}</b></span>
+          <span>📊 Tổng số bài Quiz đã làm: <b class="mono-num">${qs.total_quizzes}</b></span>
+        </div>
+        <div class="quiz-mode-grid">
+          <button type="button" class="quiz-mode-card ${quizMode === 'mixed' ? 'active' : ''}" data-qmode="mixed">
+            <div class="quiz-mode-title">⚡ Hỗn hợp (Khuyên dùng)</div>
+            <div class="quiz-mode-sub">7 câu trắc nghiệm + 3 câu gõ từ cuối bài</div>
+          </button>
+          <button type="button" class="quiz-mode-card ${quizMode === 'mcq' ? 'active' : ''}" data-qmode="mcq">
+            <div class="quiz-mode-title">🔘 Trắc nghiệm 4 đáp án</div>
+            <div class="quiz-mode-sub">Xen kẽ chọn nghĩa &amp; điền ngữ cảnh</div>
+          </button>
+          <button type="button" class="quiz-mode-card ${quizMode === 'typing' ? 'active' : ''}" data-qmode="typing">
+            <div class="quiz-mode-title">⌨️ Gõ từ Active Recall</div>
+            <div class="quiz-mode-sub">Nhìn nghĩa &amp; gợi ý chữ cái đầu để gõ lại</div>
+          </button>
+        </div>
+        ${quizErrorMsg ? `<div class="status-msg err" style="margin-bottom:10px;">${esc(quizErrorMsg)}</div>` : ''}
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <button class="btn btn-primary" id="startQuizBtn" ${quizLoading ? 'disabled' : ''}>
+            ${quizLoading ? 'ĐANG TẠO BÀI QUIZ...' : 'BẮT ĐẦU QUIZ 10 CÂU →'}
+          </button>
+          <span style="font-size:11.5px;color:var(--m-muted);">Từ nào bạn chọn sai hoặc bấm <b>Quên từ này</b> sẽ tự động reset về đầu hàng đợi SRS hôm nay.</span>
+        </div>
+      </div>`;
+  }
+
+  if (quizPhase === 'playing') {
+    const q = quizQuestions[quizIdx];
+    if (!q) return '';
+    const total = quizQuestions.length || 1;
+    const pct = Math.round(((quizIdx + (quizFeedback ? 1 : 0)) / total) * 100);
+    const typeLabel =
+      q.question_type === 'cloze_mcq'
+        ? 'ĐIỀN NGỮ CẢNH'
+        : q.question_type === 'typing'
+          ? 'GÕ TỪ ACTIVE RECALL'
+          : 'TRẮC NGHIỆM NGHĨA';
+
+    return `
+      <div class="box">
+        <div class="quiz-stage">
+          <div class="quiz-head">
+            <span>CÂU ${quizIdx + 1} / ${total} · ${esc(q.topic.toUpperCase())}</span>
+            <span class="quiz-type-badge">${typeLabel}</span>
+          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
+          <div class="quiz-prompt">${esc(q.prompt_text)}</div>
+          ${q.cloze_sentence ? `<div class="quiz-cloze">"${renderClozeHtml(q.cloze_sentence)}"</div>` : ''}
+
+          ${
+            q.question_type === 'typing'
+              ? `
+                <div style="font-size:12px;color:var(--m-muted);margin-bottom:4px;">Gợi ý: <b class="mono-num">${esc(q.hint)}</b></div>
+                <div class="quiz-typing-row">
+                  <input type="text" class="quiz-typing-input" id="quizTypingInput"
+                    placeholder="Nhập từ/cụm từ tiếng Anh..."
+                    value="${esc(quizFeedback?.typedText || '')}"
+                    ${quizFeedback ? 'disabled' : ''} />
+                  ${
+                    !quizFeedback
+                      ? `<button class="btn btn-primary" id="quizCheckTypingBtn" type="button">KIỂM TRA (Enter)</button>
+                         <button class="btn" id="quizGiveUpBtn" type="button">❓ Quên từ này</button>`
+                      : ''
+                  }
+                </div>`
+              : `
+                <div class="quiz-options-grid">
+                  ${q.options
+                    .map((opt, i) => {
+                      let cls = 'quiz-opt-btn';
+                      if (quizFeedback) {
+                        if (opt === q.word) cls += ' correct';
+                        else if (quizFeedback.selectedOpt === opt) cls += ' wrong';
+                      }
+                      return `<button type="button" class="${cls}" data-quiz-opt="${i}" ${quizFeedback ? 'disabled' : ''}>${String.fromCharCode(65 + i)}. ${esc(opt)}</button>`;
+                    })
+                    .join('')}
+                </div>
+                ${
+                  !quizFeedback
+                    ? `<div style="margin-top:10px;">
+                         <button class="btn btn-sm" id="quizGiveUpBtn" type="button">❓ Quên từ này (đẩy về SRS)</button>
+                       </div>`
+                    : ''
+                }`
+          }
+
+          ${
+            quizFeedback
+              ? `
+                <div class="quiz-feedback ${quizFeedback.correct ? 'ok' : 'err'}">
+                  <div style="font-weight:700;margin-bottom:4px;">
+                    ${quizFeedback.correct ? '✓ Chính xác!' : quizFeedback.gaveUp ? '↺ Đã ghi nhận quên từ này' : '✕ Chưa chính xác'}
+                    — Đáp án: <b>${esc(q.word)}</b>
+                  </div>
+                  <div>Nghĩa: <b>${esc(q.meaning)}</b></div>
+                  <div style="color:var(--m-muted);margin-top:2px;">Ví dụ: "${esc(q.example)}"</div>
+                  ${!quizFeedback.correct ? `<div class="quiz-srs-badge">↺ Đã đánh dấu học lại trong SRS</div>` : ''}
+                  <div style="margin-top:10px;">
+                    <button class="btn btn-primary" id="quizNextBtn" type="button">
+                      ${quizIdx + 1 >= total ? 'XEM KẾT QUẢ →' : 'CÂU TIẾP THEO →'}
+                    </button>
+                  </div>
+                </div>`
+              : ''
+          }
+        </div>
+      </div>`;
+  }
+
+  if (quizPhase === 'summary' && quizSummary) {
+    const forgotten = quizSummary.forgotten_cards;
+    return `
+      <div class="box">
+        <div class="quiz-summary-hero">
+          <div class="quiz-summary-score mono-num">${quizSummary.correct_count} / ${quizSummary.total_questions} · ${quizSummary.accuracy_pct}%</div>
+          <div style="font-size:12px;color:var(--m-muted);">
+            ✓ Đã lưu lịch sử Quiz${quizSummary.marked_quest_done ? ' · ✓ Đã tự động tick xong nhiệm vụ Quiz hôm nay!' : ''}
+          </div>
+        </div>
+        ${
+          forgotten.length > 0
+            ? `
+              <div style="font-size:12.5px;font-weight:700;margin-bottom:4px;">
+                Các từ bạn vừa quên (${forgotten.length}) — Đã tự động đẩy về hàng đợi SRS học lại hôm nay:
+              </div>
+              <div class="quiz-forgotten-list">
+                ${forgotten
+                  .map(
+                    (c) => `
+                  <div class="quiz-forgotten-item">
+                    <div><b>${esc(c.word)}</b> — ${esc(c.meaning)}</div>
+                    <div style="font-size:11px;color:var(--m-muted);">"${esc(c.example)}"</div>
+                  </div>`
+                  )
+                  .join('')}
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button class="btn btn-primary" id="quizReviewForgottenBtn" type="button">↺ ÔN LẠI NGAY ${forgotten.length} TỪ VỪA QUÊN →</button>
+                <button class="btn" id="quizRestartBtn" type="button">LÀM BÀI QUIZ MỚI</button>
+              </div>`
+            : `
+              <div style="text-align:center;padding:8px 0 12px;font-size:12.5px;color:var(--m-ok);font-weight:700;">
+                🎉 Xuất sắc! Bạn nhớ trọn vẹn tất cả từ vựng trong bài kiểm tra này.
+              </div>
+              <div style="text-align:center;">
+                <button class="btn btn-primary" id="quizRestartBtn" type="button">LÀM BÀI QUIZ MỚI</button>
+              </div>`
+        }
+      </div>`;
+  }
+
+  return '';
+}
+
 function renderApp() {
   if (!dash) return;
   const curTheme = normalizeTheme(dash.settings.theme);
   const isAim80 = dash.settings.target_band >= 7.5;
+  const winTitle = isAim80 ? 'XD4T // IELTS 8.0' : 'XD4T // IELTS 6.5';
+  if (lastSyncedWindowTitle !== winTitle) {
+    lastSyncedWindowTitle = winTitle;
+    document.title = winTitle;
+    try {
+      void getCurrentWindow().setTitle(winTitle);
+    } catch {
+      // Ignore outside Tauri window context
+    }
+  }
   document.documentElement.className = `theme-${curTheme}`;
   const doneQuests = dash.quests.filter((q) => q.done).length;
   const totalQuests = dash.quests.length || 1;
@@ -293,6 +510,14 @@ function renderApp() {
             </div>
           </div>
         </div>
+        ${
+          dash.quiz_status.quiz_due
+            ? `<div class="quiz-due-banner">
+                <span>📝 <b>Nhắc lịch từ vựng:</b> ${esc(dash.quiz_status.quiz_due_reason)}</span>
+                <button class="btn btn-sm btn-primary" id="bannerStartQuizBtn" type="button">LÀM QUIZ 10 CÂU →</button>
+              </div>`
+            : ''
+        }
       </div>
 
       <!-- TAB 2: WRITING + AI -->
@@ -383,32 +608,45 @@ function renderApp() {
 
       <!-- TAB 3: VOCAB SRS -->
       <div class="panel ${activeTab === 'vocab' ? 'active' : ''}" id="tab-vocab">
-        <div class="box">
-          <div class="box-title">
-            <span>FLASHCARD SRS (THUẬT TOÁN SM-2 · OFFLINE · ${dash.total_vocab_count} THẺ)</span>
-            <span>${curCard ? `THẺ ${cardIdx + 1} / ${dueCards.length} CẦN ÔN HÔM NAY` : 'ĐÃ ÔN HẾT HÔM NAY ✓'}</span>
-          </div>
-          ${
-            curCard
-              ? `
-            <div class="fc-stage" id="fcStage" tabindex="0" role="button">
-              <span class="fc-topic">${esc(curCard.topic.toUpperCase())} · ${isAim80 ? 'BAND 8.0 (C1–C2)' : 'BAND 6.5'} · REPS ${curCard.reps}</span>
-              <div class="fc-word">${esc(curCard.word)}</div>
-              ${!cardFlipped ? `<div style="font-size:11px;color:var(--m-muted);">(Bấm vào thẻ để xem nghĩa & ví dụ)</div>` : ''}
-              <div class="fc-back ${cardFlipped ? 'open' : ''}">
-                <div style="font-weight:700;margin-bottom:4px;">${esc(curCard.meaning)}</div>
-                <div style="font-size:11.5px;color:var(--m-muted);">"${esc(curCard.example)}"</div>
-              </div>
-            </div>
-            <div class="srs-row">
-              <button class="btn srs-btn" data-q="0">[1] QUÊN · 10p</button>
-              <button class="btn srs-btn" data-q="1">[2] KHÓ · 1 ngày</button>
-              <button class="btn srs-btn" data-q="2">[3] NHỚ · 3 ngày</button>
-              <button class="btn btn-primary srs-btn" data-q="3">[4] DỄ · 7 ngày</button>
-            </div>`
-              : `<div style="padding:28px;text-align:center;color:var(--m-muted);">Tuyệt vời! Bạn đã hoàn thành toàn bộ thẻ đến hạn hôm nay.</div>`
-          }
+        <div class="vocab-sub-toggle">
+          <button type="button" class="vocab-sub-btn ${vocabSubMode === 'flashcard' ? 'active' : ''}" data-vsub="flashcard">
+            📇 ÔN FLASHCARD (SM-2)
+          </button>
+          <button type="button" class="vocab-sub-btn ${vocabSubMode === 'quiz' ? 'active' : ''}" data-vsub="quiz">
+            📝 QUIZ KIỂM TRA TRÍ NHỚ
+            ${dash.quiz_status.quiz_due ? '<span class="quiz-due-pill">ĐẾN LỊCH</span>' : ''}
+          </button>
         </div>
+        ${
+          vocabSubMode === 'quiz'
+            ? renderQuizBox()
+            : `<div class="box">
+                <div class="box-title">
+                  <span>FLASHCARD SRS (THUẬT TOÁN SM-2 · OFFLINE · ${dash.total_vocab_count} THẺ)</span>
+                  <span>${curCard ? `THẺ ${cardIdx + 1} / ${dueCards.length} CẦN ÔN HÔM NAY` : 'ĐÃ ÔN HẾT HÔM NAY ✓'}</span>
+                </div>
+                ${
+                  curCard
+                    ? `
+                  <div class="fc-stage" id="fcStage" tabindex="0" role="button">
+                    <span class="fc-topic">${esc(curCard.topic.toUpperCase())} · ${isAim80 ? 'BAND 8.0 (C1–C2)' : 'BAND 6.5'} · REPS ${curCard.reps}</span>
+                    <div class="fc-word">${esc(curCard.word)}</div>
+                    ${!cardFlipped ? `<div style="font-size:11px;color:var(--m-muted);">(Bấm vào thẻ để xem nghĩa & ví dụ)</div>` : ''}
+                    <div class="fc-back ${cardFlipped ? 'open' : ''}">
+                      <div style="font-weight:700;margin-bottom:4px;">${esc(curCard.meaning)}</div>
+                      <div style="font-size:11.5px;color:var(--m-muted);">"${esc(curCard.example)}"</div>
+                    </div>
+                  </div>
+                  <div class="srs-row">
+                    <button class="btn srs-btn" data-q="0">[1] QUÊN · 10p</button>
+                    <button class="btn srs-btn" data-q="1">[2] KHÓ · 1 ngày</button>
+                    <button class="btn srs-btn" data-q="2">[3] NHỚ · 3 ngày</button>
+                    <button class="btn btn-primary srs-btn" data-q="3">[4] DỄ · 7 ngày</button>
+                  </div>`
+                    : `<div style="padding:28px;text-align:center;color:var(--m-muted);">Tuyệt vời! Bạn đã hoàn thành toàn bộ thẻ đến hạn hôm nay.</div>`
+                }
+              </div>`
+        }
       </div>
 
       <!-- TAB 4: ROADMAP & ERROR LOG -->
@@ -1012,7 +1250,169 @@ function bindEvents() {
     };
   }
 
-  // Vocab SRS
+  // Vocab SRS & Quiz
+  const startQuizRun = async () => {
+    quizLoading = true;
+    quizErrorMsg = '';
+    renderApp();
+    try {
+      const questions = await invoke<QuizQuestion[]>('generate_vocab_quiz', {
+        count: 10,
+        mode: quizMode,
+      });
+      if (!questions.length) {
+        quizErrorMsg = 'Chưa có đủ thẻ từ vựng để tạo bài Quiz.';
+        quizPhase = 'setup';
+      } else {
+        quizQuestions = questions;
+        quizIdx = 0;
+        quizAnswers = [];
+        quizFeedback = null;
+        quizSummary = null;
+        quizPhase = 'playing';
+      }
+    } catch (err) {
+      quizErrorMsg = `Không thể tạo bài Quiz: ${String(err)}`;
+      quizPhase = 'setup';
+    } finally {
+      quizLoading = false;
+      renderApp();
+      document.getElementById('quizTypingInput')?.focus();
+    }
+  };
+
+  const bannerStartQuizBtn = document.getElementById('bannerStartQuizBtn');
+  if (bannerStartQuizBtn) {
+    bannerStartQuizBtn.onclick = () => {
+      activeTab = 'vocab';
+      vocabSubMode = 'quiz';
+      void startQuizRun();
+    };
+  }
+
+  document.querySelectorAll<HTMLButtonElement>('[data-vsub]').forEach((btn) => {
+    btn.onclick = () => {
+      vocabSubMode = btn.dataset.vsub as 'flashcard' | 'quiz';
+      renderApp();
+    };
+  });
+
+  document.querySelectorAll<HTMLButtonElement>('[data-qmode]').forEach((btn) => {
+    btn.onclick = () => {
+      quizMode = btn.dataset.qmode as 'mixed' | 'mcq' | 'typing';
+      renderApp();
+    };
+  });
+
+  const startQuizBtn = document.getElementById('startQuizBtn');
+  if (startQuizBtn) {
+    startQuizBtn.onclick = () => {
+      void startQuizRun();
+    };
+  }
+
+  const recordQuizAnswer = (correct: boolean, gaveUp: boolean, selectedOpt?: string, typedText?: string) => {
+    const q = quizQuestions[quizIdx];
+    if (!q || quizFeedback) return;
+    quizAnswers.push({ card_id: q.card_id, correct, gave_up: gaveUp });
+    quizFeedback = { correct, gaveUp, selectedOpt, typedText };
+    renderApp();
+    document.getElementById('quizNextBtn')?.focus();
+  };
+
+  document.querySelectorAll<HTMLButtonElement>('[data-quiz-opt]').forEach((btn) => {
+    btn.onclick = () => {
+      const q = quizQuestions[quizIdx];
+      if (!q || quizFeedback) return;
+      const opt = q.options[Number(btn.dataset.quizOpt)];
+      recordQuizAnswer(opt === q.word, false, opt);
+    };
+  });
+
+  const quizGiveUpBtn = document.getElementById('quizGiveUpBtn');
+  if (quizGiveUpBtn) {
+    quizGiveUpBtn.onclick = () => {
+      const typed = (document.getElementById('quizTypingInput') as HTMLInputElement | null)?.value;
+      recordQuizAnswer(false, true, undefined, typed);
+    };
+  }
+
+  const quizCheckTypingBtn = document.getElementById('quizCheckTypingBtn');
+  const quizTypingInput = document.getElementById('quizTypingInput') as HTMLInputElement | null;
+  const checkTyping = () => {
+    const q = quizQuestions[quizIdx];
+    if (!q || quizFeedback || !quizTypingInput) return;
+    const val = quizTypingInput.value;
+    if (!val.trim()) {
+      quizTypingInput.focus();
+      return;
+    }
+    recordQuizAnswer(isTypingAnswerMatch(val, q.word), false, undefined, val);
+  };
+  if (quizCheckTypingBtn) {
+    quizCheckTypingBtn.onclick = checkTyping;
+  }
+  if (quizTypingInput && !quizFeedback) {
+    quizTypingInput.focus();
+    quizTypingInput.onkeydown = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        checkTyping();
+      }
+    };
+  }
+
+  const quizNextBtn = document.getElementById('quizNextBtn');
+  if (quizNextBtn) {
+    const goNext = async () => {
+      if (quizIdx + 1 < quizQuestions.length) {
+        quizIdx += 1;
+        quizFeedback = null;
+        renderApp();
+        document.getElementById('quizTypingInput')?.focus();
+      } else {
+        quizSummary = await invoke<QuizSubmitResult>('submit_vocab_quiz', {
+          mode: quizMode,
+          results: quizAnswers,
+        });
+        dueCards = await invoke<VocabCard[]>('get_due_vocab');
+        dash = await invoke<DashboardState>('get_dashboard');
+        quizPhase = 'summary';
+        quizFeedback = null;
+        renderApp();
+      }
+    };
+    quizNextBtn.onclick = () => { void goNext(); };
+    quizNextBtn.onkeydown = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        void goNext();
+      }
+    };
+  }
+
+  const quizReviewForgottenBtn = document.getElementById('quizReviewForgottenBtn');
+  if (quizReviewForgottenBtn) {
+    quizReviewForgottenBtn.onclick = async () => {
+      dueCards = await invoke<VocabCard[]>('get_due_vocab');
+      cardIdx = 0;
+      cardFlipped = false;
+      vocabSubMode = 'flashcard';
+      quizPhase = 'setup';
+      renderApp();
+    };
+  }
+
+  const quizRestartBtn = document.getElementById('quizRestartBtn');
+  if (quizRestartBtn) {
+    quizRestartBtn.onclick = () => {
+      quizPhase = 'setup';
+      quizFeedback = null;
+      quizSummary = null;
+      renderApp();
+    };
+  }
+
   const fcStage = document.getElementById('fcStage');
   if (fcStage) {
     bindActivate(fcStage, () => {

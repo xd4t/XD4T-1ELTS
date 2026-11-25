@@ -5,8 +5,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::models::{
-    DailyQuest, DashboardState, ErrorLog, Essay, PracticeScore, RoadmapItem, Settings,
-    SettingsPublic, SkillBand, StudyDay, VocabCard,
+    DailyQuest, DashboardState, ErrorLog, Essay, ForgottenVocabCard, PracticeScore,
+    QuizAnswerInput, QuizQuestion, QuizSubmitResult, RoadmapItem, Settings, SettingsPublic,
+    SkillBand, StudyDay, VocabCard, VocabQuizStatus,
 };
 use crate::roadmap_parser::{parse_roadmap_markdown, ParsedQuest};
 use crate::seed_data::{
@@ -230,6 +231,15 @@ pub fn init_schema_and_seed(conn: &Connection, seed_path: Option<&Path>) -> Resu
             title TEXT NOT NULL,
             done INTEGER NOT NULL DEFAULT 0
         );
+
+        CREATE TABLE IF NOT EXISTS vocab_quizzes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            taken_at TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            total_questions INTEGER NOT NULL,
+            correct_count INTEGER NOT NULL,
+            forgotten_words TEXT NOT NULL DEFAULT '[]'
+        );
         "#,
     )
     .map_err(|e| format!("Schema init error: {e}"))?;
@@ -386,81 +396,85 @@ fn import_seed_key_if_needed(conn: &Connection, seed_path: &Path) -> Result<(), 
     Ok(())
 }
 
-pub fn default_quests_for_weekday(weekday: Weekday, is_80: bool) -> [(&'static str, &'static str, i64); 3] {
+pub fn default_quests_for_weekday(weekday: Weekday, is_80: bool) -> Vec<(&'static str, &'static str, i64)> {
     if is_80 {
         match weekday {
-            Weekday::Mon => [
+            Weekday::Mon => vec![
                 ("Ôn 12 cụm từ C1–C2 & Hedging (SRS)", "Thứ 2 · Collocations Band 7.5–8.0", 8),
                 ("Writing: Luyện cấu trúc C1 & viết lại đoạn cũ nâng Band 7.5+", "Sửa lỗi từ Sổ lỗi · nâng +1.0 band", 15),
                 ("Listening: Soi transcript & bẫy Distractors Part 3–4 (Study4)", "Bắt nối âm, đuôi s/ed & bẫy đổi ý", 12),
             ],
-            Weekday::Tue => [
+            Weekday::Tue => vec![
                 ("Ôn 12 cụm từ C1–C2 & Hedging (SRS)", "Thứ 3 · Collocations Band 7.5–8.0", 8),
                 ("Reading: 1 Passage 2–3 trên Study4 bấm giờ 18p & nhập điểm", "Phân tích cấu trúc đoạn & phạm vi ý", 15),
                 ("Lập 5 cặp Paraphrase C1 từ bài đọc vào Sổ lỗi/SRS", "Săn từ đồng nghĩa học thuật Passage 3", 10),
             ],
-            Weekday::Wed => [
+            Weekday::Wed => vec![
                 ("Ôn 12 cụm từ C1–C2 & Hedging (SRS)", "Thứ 4 · Collocations Band 7.5–8.0", 8),
                 ("Writing: Viết Mở bài + 1 Body (PEEL + Counter-argument) & chấm AI", "Lập luận sâu + hedging chuẩn 7.5+", 15),
                 ("Speaking: Nói lại luận điểm vừa viết theo A.R.E.A trong 2 phút", "Ghi âm tự nghe · chuyển từ viết sang nói", 10),
             ],
-            Weekday::Thu => [
+            Weekday::Thu => vec![
                 ("Ôn 12 cụm từ C1–C2 & Hedging (SRS)", "Thứ 5 · Collocations Band 7.5–8.0", 8),
                 ("Listening: Luyện Part 3 & Part 4 trên Study4 bấm giờ & nhập điểm", "Bắt bẫy distractor agreement", 15),
                 ("Phân tích câu sai & ghi bẫy đổi ý vào Sổ lỗi", "Chống mất điểm oan Part 3–4", 10),
+                ("Quiz C1–C2 giữa tuần: 10 cụm từ nâng cao (rà từ quên để ôn lại)", "Thứ 5 · Kiểm tra trí nhớ từ vựng · đẩy từ quên về SRS", 5),
             ],
-            Weekday::Fri => [
+            Weekday::Fri => vec![
                 ("Ôn 12 cụm từ C1–C2 & Hedging (SRS)", "Thứ 6 · Collocations Band 7.5–8.0", 8),
                 ("Speaking: Luyện 1 đề Part 2 (2 phút) + 3 câu trừu tượng Part 3", "Mở rộng lập luận đa chiều · tự nhiên", 15),
                 ("Reading tốc độ: Luyện riêng T/F/NG suy luận hoặc Matching Headings", "Xử lý dạng bẫy hay mất điểm", 10),
             ],
-            Weekday::Sat => [
+            Weekday::Sat => vec![
                 ("Ôn 12 cụm từ C1–C2 & Hedging (SRS)", "Thứ 7 · Collocations Band 7.5–8.0", 8),
                 ("Writing Full: Viết 1 bài hoàn chỉnh + soát Checklist 3p & chấm AI 7.5+", "Bấm giờ chuẩn · kiểm tra 6 lỗi tinh tế", 20),
                 ("Reading Full Test (3 Passages bấm giờ 54p trên Study4) & nhập điểm", "Mục tiêu 35–38/40 câu", 15),
             ],
-            Weekday::Sun => [
+            Weekday::Sun => vec![
                 ("Writing Rewrite: Viết lại đoạn yếu nhất của bài T7 đạt chuẩn 7.5–8.0", "Chủ nhật · Nâng cấp lập luận & collocation", 15),
                 ("Listening Full Test (4 Parts trên Study4) & nhập điểm", "Mục tiêu 36–39/40 câu", 15),
                 ("Rà soát Sổ lỗi tuần & ôn từ vựng chủ đề mới", "Tổng kết tuần · giữ vững nhịp 8.0", 10),
+                ("Quiz C1–C2 tổng kết tuần: 10 cụm từ (quên từ nào đẩy về SRS)", "Chủ nhật · Rà soát trí nhớ · giữ vững vốn từ 8.0", 5),
             ],
         }
     } else {
         match weekday {
-            Weekday::Mon => [
+            Weekday::Mon => vec![
                 ("Ôn 10 thẻ Collocations & Word Family (SRS)", "Thứ 2 · SRS Flashcards · giữ chuỗi mỗi ngày", 8),
                 ("Writing: Sửa 3 nhóm lỗi từ Sổ lỗi / luyện 6 cấu trúc câu viết lại bài cũ", "Độ chính xác / Cấu trúc · GĐ1–2", 15),
                 ("Listening Dictation: Chép chính tả 1 đoạn ngắn bắt đuôi s/ed", "DailyDictation · bắt nối âm & âm cuối", 12),
             ],
-            Weekday::Tue => [
+            Weekday::Tue => vec![
                 ("Ôn 10 thẻ Collocations (SRS)", "Thứ 3 · SRS Flashcards · giữ chuỗi mỗi ngày", 8),
                 ("Reading: 1 Passage trên Study4 bấm giờ 20p & chữa theo Linearthinking", "Phân tích chủ–vị & bẫy từ tuyệt đối", 15),
                 ("Lập 5 cặp Paraphrase từ bài đọc & nhập điểm Reading", "Ghi cặp đồng nghĩa vào Sổ lỗi / SRS", 10),
             ],
-            Weekday::Wed => [
+            Weekday::Wed => vec![
                 ("Ôn 10 thẻ Collocations (SRS)", "Thứ 4 · SRS Flashcards · giữ chuỗi mỗi ngày", 8),
                 ("Writing: Ôn khung dạng đề tuần + viết Mở bài & 1 Body (chấm AI)", "Soát checklist 3p trước khi nộp AI", 15),
                 ("Speaking: Nói lại chính luận điểm vừa viết trong 2 phút (ghi âm)", "Chuyển ý từ Writing sang Speaking", 10),
             ],
-            Weekday::Thu => [
+            Weekday::Thu => vec![
                 ("Ôn 10 thẻ Collocations (SRS)", "Thứ 5 · SRS Flashcards · giữ chuỗi mỗi ngày", 8),
                 ("Listening: Làm 2 Sections trên Study4 bấm giờ & soi Transcript", "Cambridge Practice · nghe chủ động", 15),
                 ("Đánh dấu bẫy Distractors & nhập điểm Listening", "Chép chính tả lại đúng câu nghe sai", 10),
+                ("Quiz kiểm tra 10 từ vựng định kỳ (quên từ nào đẩy về SRS học lại)", "Thứ 5 · Kiểm tra trí nhớ từ vựng · chống rơi rụng", 5),
             ],
-            Weekday::Fri => [
+            Weekday::Fri => vec![
                 ("Ôn 10 thẻ Collocations (SRS)", "Thứ 6 · SRS Flashcards · giữ chuỗi mỗi ngày", 8),
                 ("Speaking: Luyện Part 1/2/3 theo khung A.R.E.A (chú ý âm cuối & chia động từ)", "Ghi âm tự nghe lại sửa lỗi thì", 15),
                 ("Reading tốc độ: Luyện riêng 1 dạng hay sai (T/F/NG hoặc Matching Headings)", "Xử lý dạng bài hay mất điểm", 10),
             ],
-            Weekday::Sat => [
+            Weekday::Sat => vec![
                 ("Ôn 10 thẻ Collocations (SRS)", "Thứ 7 · SRS Flashcards · giữ chuỗi mỗi ngày", 8),
                 ("Writing Full: Viết 1 bài hoàn chỉnh + soát Checklist 3p & chấm AI 4 tiêu chí", "Bấm giờ chuẩn · cập nhật Sổ lỗi", 20),
                 ("Reading Full Test trên Study4 bấm giờ & nhập điểm", "Mục tiêu vùng đệm 30–34/40 câu", 15),
             ],
-            Weekday::Sun => [
+            Weekday::Sun => vec![
                 ("Writing Rewrite: Bắt buộc viết lại đoạn yếu nhất của bài T7 đạt ≥ 6.5", "Chủ nhật · sửa triệt để lỗi đoạn yếu", 15),
                 ("Listening Full Test trên Study4 & nhập điểm", "Làm 4 Sections bấm giờ + chữa 20p", 15),
                 ("Tổng kết Sổ lỗi tuần & ôn 12 cụm từ chủ đề mới", "Từ vựng ngữ cảnh · nạp vào SRS", 10),
+                ("Quiz tổng kết tuần: 10 từ vựng (rà từ hay quên để ôn lại)", "Chủ nhật · Rà soát trí nhớ · đẩy từ quên về SRS", 5),
             ],
         }
     }
@@ -787,13 +801,13 @@ pub fn get_due_vocab(conn: &Connection, today: &str) -> Result<Vec<VocabCard>, S
         "SELECT id, track, topic, word, meaning, example, ease, interval_days, reps, due_date
          FROM vocab_cards
          WHERE due_date <= ?1
-         ORDER BY due_date ASC, id DESC
+         ORDER BY (CASE WHEN reps = 0 AND ease < 2.5 THEN 0 ELSE 1 END) ASC, due_date ASC, ease ASC, id DESC
          LIMIT 40"
     } else {
         "SELECT id, track, topic, word, meaning, example, ease, interval_days, reps, due_date
          FROM vocab_cards
          WHERE due_date <= ?1
-         ORDER BY due_date ASC, id ASC
+         ORDER BY (CASE WHEN reps = 0 AND ease < 2.5 THEN 0 ELSE 1 END) ASC, due_date ASC, ease ASC, id ASC
          LIMIT 40"
     };
     let mut stmt = conn.prepare(order_sql).map_err(|e| e.to_string())?;
@@ -819,6 +833,427 @@ pub fn get_due_vocab(conn: &Connection, today: &str) -> Result<Vec<VocabCard>, S
         out.push(item.map_err(|e| e.to_string())?);
     }
     Ok(out)
+}
+
+fn next_rand(seed: &mut u64) -> u64 {
+    let mut x = *seed;
+    if x == 0 {
+        x = 0x9e37_79b9_7f4a_7c15;
+    }
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    *seed = x;
+    x
+}
+
+fn shuffle_slice<T>(items: &mut [T], seed: &mut u64) {
+    let len = items.len();
+    if len <= 1 {
+        return;
+    }
+    for i in (1..len).rev() {
+        let j = (next_rand(seed) as usize) % (i + 1);
+        items.swap(i, j);
+    }
+}
+
+fn make_cloze_sentence(example: &str, word: &str) -> Option<String> {
+    let clean_word = word.trim();
+    if clean_word.is_empty() {
+        return None;
+    }
+    let ex_lower = example.to_lowercase();
+    let w_lower = clean_word.to_lowercase();
+    if let Some(byte_idx) = ex_lower.find(&w_lower) {
+        // Ensure char boundary safety (ASCII/UTF-8 lowercase can shift lengths in rare cases, check slice)
+        if example.is_char_boundary(byte_idx) && example.is_char_boundary(byte_idx + w_lower.len()) {
+            let mut out = String::with_capacity(example.len());
+            out.push_str(&example[..byte_idx]);
+            out.push_str("________");
+            out.push_str(&example[byte_idx + w_lower.len()..]);
+            return Some(out);
+        }
+    }
+    None
+}
+
+fn make_typing_hint(word: &str) -> String {
+    let primary = word
+        .split('(')
+        .next()
+        .unwrap_or(word)
+        .split('/')
+        .next()
+        .unwrap_or(word)
+        .trim();
+    primary
+        .split_whitespace()
+        .map(|tok| {
+            tok.split('-')
+                .map(|part| {
+                    let mut chars = part.chars();
+                    match chars.next() {
+                        Some(first) => {
+                            let rest: String = chars
+                                .map(|c| if c.is_alphanumeric() { '_' } else { c })
+                                .collect();
+                            format!("{first}{rest}")
+                        }
+                        None => String::new(),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("-")
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub fn get_vocab_quiz_status(conn: &Connection, today_naive: NaiveDate) -> Result<VocabQuizStatus, String> {
+    let today = today_naive.format("%Y-%m-%d").to_string();
+    let total_quizzes: i64 = conn
+        .query_row("SELECT COUNT(*) FROM vocab_quizzes", [], |r| r.get(0))
+        .unwrap_or(0);
+
+    let last_row: Option<(String, i64, i64)> = conn
+        .query_row(
+            "SELECT taken_at, correct_count, total_questions FROM vocab_quizzes ORDER BY id DESC LIMIT 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+
+    let (last_quiz_at, last_quiz_score) = match last_row {
+        Some((taken, corr, tot)) => (Some(taken), Some(format!("{corr}/{tot}"))),
+        None => (None, None),
+    };
+
+    let days_since_last_quiz = last_quiz_at
+        .as_deref()
+        .and_then(|s| NaiveDate::parse_from_str(s.get(..10).unwrap_or(s), "%Y-%m-%d").ok())
+        .map(|d| (today_naive - d).num_days().max(0));
+
+    let done_today = last_quiz_at
+        .as_deref()
+        .map(|s| s.starts_with(&today))
+        .unwrap_or(false);
+    let is_scheduled_day = matches!(today_naive.weekday(), Weekday::Thu | Weekday::Sun);
+    let study_days_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM study_days WHERE minutes > 0 OR quests_done > 0",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
+    let (quiz_due, quiz_due_reason) = if done_today {
+        (false, "Đã hoàn thành Quiz từ vựng hôm nay ✓".to_string())
+    } else if is_scheduled_day {
+        let msg = if today_naive.weekday() == Weekday::Thu {
+            "Đến lịch Quiz định kỳ Thứ 5 (kiểm tra chống quên)"
+        } else {
+            "Đến lịch Quiz tổng kết Chủ Nhật (rà từ hay quên)"
+        };
+        (true, msg.to_string())
+    } else if let Some(days) = days_since_last_quiz {
+        if days >= 3 {
+            (true, format!("Đã {days} ngày chưa kiểm tra trí nhớ từ vựng"))
+        } else {
+            (false, "Gợi ý kiểm tra nhanh 10 từ để chống quên".to_string())
+        }
+    } else if study_days_count >= 1 {
+        (true, "Gợi ý kiểm tra nhanh 10 từ để chống quên".to_string())
+    } else {
+        (false, "Gợi ý kiểm tra nhanh 10 từ để chống quên".to_string())
+    };
+
+    Ok(VocabQuizStatus {
+        last_quiz_at,
+        days_since_last_quiz,
+        last_quiz_score,
+        total_quizzes,
+        quiz_due,
+        quiz_due_reason,
+    })
+}
+
+pub fn generate_vocab_quiz(
+    conn: &Connection,
+    count: Option<i64>,
+    mode: Option<String>,
+) -> Result<Vec<QuizQuestion>, String> {
+    let target_count = count.unwrap_or(10).clamp(1, 20) as usize;
+    let mode_norm = match mode.as_deref().unwrap_or("mixed").trim() {
+        "mcq" => "mcq",
+        "typing" => "typing",
+        _ => "mixed",
+    };
+
+    let target_band: f64 = conn
+        .query_row(
+            "SELECT COALESCE(target_band, 7.0) FROM settings WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(7.0);
+    let is_80 = target_band >= 7.5;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, track, topic, word, meaning, example, ease, interval_days, reps, due_date
+             FROM vocab_cards",
+        )
+        .map_err(|e| e.to_string())?;
+    let all_cards: Vec<VocabCard> = stmt
+        .query_map([], |r| {
+            Ok(VocabCard {
+                id: r.get(0)?,
+                track: r.get(1)?,
+                topic: r.get(2)?,
+                word: r.get(3)?,
+                meaning: r.get(4)?,
+                example: r.get(5)?,
+                ease: r.get(6)?,
+                interval_days: r.get(7)?,
+                reps: r.get(8)?,
+                due_date: r.get(9)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    if all_cards.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut studied: Vec<VocabCard> = all_cards.iter().filter(|c| c.reps >= 1).cloned().collect();
+    let mut unstudied: Vec<VocabCard> = all_cards.iter().filter(|c| c.reps == 0).cloned().collect();
+
+    // Prioritize studied cards that are easiest to forget (lowest ease, largest interval, earliest due_date)
+    studied.sort_by(|a, b| {
+        a.ease
+            .partial_cmp(&b.ease)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| b.interval_days.cmp(&a.interval_days))
+            .then_with(|| a.due_date.cmp(&b.due_date))
+    });
+
+    if is_80 {
+        unstudied.sort_by(|a, b| b.id.cmp(&a.id));
+    } else {
+        unstudied.sort_by(|a, b| a.id.cmp(&b.id));
+    }
+
+    let mut seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(123456789)
+        ^ (all_cards.len() as u64 * 0x9e37_79b9);
+
+    let mut pool = Vec::with_capacity(all_cards.len());
+    pool.extend(studied);
+    pool.extend(unstudied);
+
+    let pick_n = target_count.min(pool.len());
+    let candidate_window = (pick_n + 4).min(pool.len());
+    shuffle_slice(&mut pool[..candidate_window], &mut seed);
+    let selected = &pool[..pick_n];
+
+    let typing_count = match mode_norm {
+        "typing" => pick_n,
+        "mcq" => 0,
+        _ => {
+            if pick_n >= 4 {
+                (pick_n * 3 + 5) / 10
+            } else {
+                0
+            }
+        }
+    };
+    let mcq_count = pick_n.saturating_sub(typing_count);
+
+    let mut questions = Vec::with_capacity(pick_n);
+    for (idx, card) in selected.iter().enumerate() {
+        let cloze_sentence = make_cloze_sentence(&card.example, &card.word);
+        let desired_type = if idx >= mcq_count {
+            "typing"
+        } else if idx % 2 == 1 && cloze_sentence.is_some() {
+            "cloze_mcq"
+        } else {
+            "meaning_mcq"
+        };
+
+        let options = if desired_type == "typing" {
+            Vec::new()
+        } else {
+            let mut distractors: Vec<String> = all_cards
+                .iter()
+                .filter(|c| c.id != card.id && c.word != card.word)
+                .map(|c| c.word.clone())
+                .collect();
+            distractors.sort();
+            distractors.dedup();
+            shuffle_slice(&mut distractors, &mut seed);
+            let mut opts: Vec<String> = distractors.into_iter().take(3).collect();
+            opts.push(card.word.clone());
+            shuffle_slice(&mut opts, &mut seed);
+            opts
+        };
+
+        let prompt_text = match desired_type {
+            "cloze_mcq" => format!("Chọn từ/cụm từ đúng điền vào chỗ trống (Nghĩa: {})", card.meaning),
+            "typing" => format!("Gõ từ/cụm từ tiếng Anh có nghĩa: {}", card.meaning),
+            _ => format!("Cụm từ nào có nghĩa là: \"{}\"?", card.meaning),
+        };
+
+        questions.push(QuizQuestion {
+            card_id: card.id,
+            word: card.word.clone(),
+            meaning: card.meaning.clone(),
+            example: card.example.clone(),
+            topic: card.topic.clone(),
+            question_type: desired_type.to_string(),
+            prompt_text,
+            cloze_sentence,
+            hint: make_typing_hint(&card.word),
+            options,
+        });
+    }
+
+    Ok(questions)
+}
+
+pub fn submit_vocab_quiz(
+    conn: &Connection,
+    mode: String,
+    results: Vec<QuizAnswerInput>,
+    today: NaiveDate,
+) -> Result<QuizSubmitResult, String> {
+    let today_str = today.format("%Y-%m-%d").to_string();
+    let tomorrow_str = (today + Duration::days(1)).format("%Y-%m-%d").to_string();
+    let total_questions = results.len() as i64;
+    let mut correct_count = 0_i64;
+    let mut forgotten_cards = Vec::new();
+    let mut forgotten_words = Vec::new();
+
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+
+    for item in &results {
+        let card: Option<(String, String, String, f64, i64)> = tx
+            .query_row(
+                "SELECT word, meaning, example, ease, reps FROM vocab_cards WHERE id = ?1",
+                params![item.card_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+
+        let Some((word, meaning, example, ease, reps)) = card else {
+            continue;
+        };
+
+        if !item.correct || item.gave_up {
+            let new_ease = (ease - 0.25).max(1.3);
+            tx.execute(
+                "UPDATE vocab_cards SET reps = 0, interval_days = 0, ease = ?1, due_date = ?2 WHERE id = ?3",
+                params![new_ease, today_str, item.card_id],
+            )
+            .map_err(|e| e.to_string())?;
+            forgotten_words.push(word.clone());
+            forgotten_cards.push(ForgottenVocabCard {
+                card_id: item.card_id,
+                word,
+                meaning,
+                example,
+            });
+        } else {
+            correct_count += 1;
+            if reps == 0 {
+                tx.execute(
+                    "UPDATE vocab_cards SET reps = 1, interval_days = 1, due_date = ?1 WHERE id = ?2",
+                    params![tomorrow_str, item.card_id],
+                )
+                .map_err(|e| e.to_string())?;
+            } else {
+                let new_ease = (ease + 0.05).min(2.8);
+                tx.execute(
+                    "UPDATE vocab_cards SET ease = ?1 WHERE id = ?2",
+                    params![new_ease, item.card_id],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+    }
+
+    let forgotten_json = serde_json::to_string(&forgotten_words).unwrap_or_else(|_| "[]".to_string());
+    tx.execute(
+        "INSERT INTO vocab_quizzes (taken_at, mode, total_questions, correct_count, forgotten_words)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![today_str, mode, total_questions, correct_count, forgotten_json],
+    )
+    .map_err(|e| e.to_string())?;
+
+    let updated_quests = tx
+        .execute(
+            "UPDATE daily_quests SET done = 1
+             WHERE date = ?1 AND track = 'ielts' AND done = 0 AND lower(title) LIKE '%quiz%'",
+            params![today_str],
+        )
+        .map_err(|e| e.to_string())?;
+    let marked_quest_done = updated_quests > 0;
+
+    let quests_done_today: i64 = tx
+        .query_row(
+            "SELECT COUNT(*) FROM daily_quests WHERE date = ?1 AND track = 'ielts' AND done = 1",
+            params![today_str],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
+    let existing_day: Option<i64> = tx
+        .query_row(
+            "SELECT minutes FROM study_days WHERE date = ?1",
+            params![today_str],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+
+    match existing_day {
+        Some(m) => {
+            tx.execute(
+                "UPDATE study_days SET minutes = ?1, quests_done = ?2 WHERE date = ?3",
+                params![m + 5, quests_done_today, today_str],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        None => {
+            tx.execute(
+                "INSERT INTO study_days (date, track, minutes, quests_done) VALUES (?1, 'ielts', 5, ?2)",
+                params![today_str, quests_done_today],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+
+    tx.commit().map_err(|e| e.to_string())?;
+
+    let accuracy_pct = if total_questions > 0 {
+        ((correct_count * 100) + (total_questions / 2)) / total_questions
+    } else {
+        0
+    };
+
+    Ok(QuizSubmitResult {
+        total_questions,
+        correct_count,
+        accuracy_pct,
+        forgotten_cards,
+        marked_quest_done,
+    })
 }
 
 pub fn review_vocab_card(
@@ -1045,6 +1480,7 @@ pub fn get_dashboard_state(conn: &Connection) -> Result<DashboardState, String> 
     let total_vocab_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM vocab_cards", [], |r| r.get(0))
         .unwrap_or(0);
+    let quiz_status = get_vocab_quiz_status(conn, today_naive)?;
 
     let mut r_stmt = conn
         .prepare("SELECT id, track, phase, week_label, title, done FROM roadmap_items ORDER BY id ASC")
@@ -1133,6 +1569,7 @@ pub fn get_dashboard_state(conn: &Connection) -> Result<DashboardState, String> 
         skill_bands,
         due_vocab_count,
         total_vocab_count,
+        quiz_status,
         roadmap,
         error_logs,
         recent_essays,
@@ -2011,10 +2448,118 @@ mod tests {
                 Weekday::Sun,
             ] {
                 let q = default_quests_for_weekday(wd, is_80);
-                assert_eq!(q.len(), 3);
+                let expected_len = if matches!(wd, Weekday::Thu | Weekday::Sun) { 4 } else { 3 };
+                assert_eq!(q.len(), expected_len);
                 titles.insert(q[1].0);
             }
             assert_eq!(titles.len(), 7);
         }
+    }
+
+    #[test]
+    fn generate_vocab_quiz_supports_all_three_modes() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema_and_seed(&conn, None).unwrap();
+
+        let mixed = generate_vocab_quiz(&conn, Some(10), Some("mixed".to_string())).unwrap();
+        assert_eq!(mixed.len(), 10);
+        let typing_n = mixed.iter().filter(|q| q.question_type == "typing").count();
+        let mcq_n = mixed.len() - typing_n;
+        assert_eq!(typing_n, 3);
+        assert_eq!(mcq_n, 7);
+
+        let mcq = generate_vocab_quiz(&conn, Some(10), Some("mcq".to_string())).unwrap();
+        assert_eq!(mcq.len(), 10);
+        for q in &mcq {
+            assert!(q.question_type == "meaning_mcq" || q.question_type == "cloze_mcq");
+            assert_eq!(q.options.len(), 4);
+            assert!(q.options.contains(&q.word));
+            let uniq: std::collections::HashSet<&String> = q.options.iter().collect();
+            assert_eq!(uniq.len(), 4);
+        }
+
+        let typing = generate_vocab_quiz(&conn, Some(5), Some("typing".to_string())).unwrap();
+        assert_eq!(typing.len(), 5);
+        for q in &typing {
+            assert_eq!(q.question_type, "typing");
+            assert!(q.options.is_empty());
+            assert!(!q.hint.is_empty());
+        }
+    }
+
+    #[test]
+    fn submit_vocab_quiz_requeues_forgotten_cards_and_ticks_quiz_quest() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema_and_seed(&conn, None).unwrap();
+
+        let today = Local::now().date_naive();
+        let today_str = today.format("%Y-%m-%d").to_string();
+
+        // Insert a Quiz quest for today so we can verify auto-tick
+        conn.execute(
+            "INSERT INTO daily_quests (date, track, title, meta, minutes, done)
+             VALUES (?1, 'ielts', 'Quiz kiểm tra 10 từ vựng định kỳ', 'Test', 5, 0)",
+            params![today_str],
+        )
+        .unwrap();
+
+        let quiz = generate_vocab_quiz(&conn, Some(4), Some("mcq".to_string())).unwrap();
+        assert_eq!(quiz.len(), 4);
+
+        // Mark first card as already learned (reps = 3, due in future) so we prove forgetting resets it
+        let future_date = (today + Duration::days(10)).format("%Y-%m-%d").to_string();
+        conn.execute(
+            "UPDATE vocab_cards SET reps = 3, interval_days = 10, ease = 2.5, due_date = ?1 WHERE id = ?2",
+            params![future_date, quiz[0].card_id],
+        )
+        .unwrap();
+
+        let inputs = vec![
+            QuizAnswerInput { card_id: quiz[0].card_id, correct: false, gave_up: false },
+            QuizAnswerInput { card_id: quiz[1].card_id, correct: true, gave_up: true }, // gave_up counts as forgotten
+            QuizAnswerInput { card_id: quiz[2].card_id, correct: true, gave_up: false },
+            QuizAnswerInput { card_id: quiz[3].card_id, correct: true, gave_up: false },
+        ];
+
+        let res = submit_vocab_quiz(&conn, "mcq".to_string(), inputs, today).unwrap();
+        assert_eq!(res.total_questions, 4);
+        assert_eq!(res.correct_count, 2);
+        assert_eq!(res.accuracy_pct, 50);
+        assert_eq!(res.forgotten_cards.len(), 2);
+        assert!(res.marked_quest_done);
+
+        // Verify forgotten card 0 was reset and appears at the head of get_due_vocab
+        let (reps0, interval0, ease0, due0): (i64, i64, f64, String) = conn
+            .query_row(
+                "SELECT reps, interval_days, ease, due_date FROM vocab_cards WHERE id = ?1",
+                params![quiz[0].card_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(reps0, 0);
+        assert_eq!(interval0, 0);
+        assert!(ease0 < 2.5);
+        assert_eq!(due0, today_str);
+
+        let due_list = get_due_vocab(&conn, &today_str).unwrap();
+        let top_ids: Vec<i64> = due_list.iter().take(2).map(|c| c.id).collect();
+        assert!(top_ids.contains(&quiz[0].card_id));
+        assert!(top_ids.contains(&quiz[1].card_id));
+
+        // Verify vocab_quizzes row saved
+        let q_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM vocab_quizzes", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(q_count, 1);
+
+        // Verify daily_quests quiz row marked done = 1
+        let quest_done: i64 = conn
+            .query_row(
+                "SELECT done FROM daily_quests WHERE date = ?1 AND lower(title) LIKE '%quiz%' LIMIT 1",
+                params![today_str],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(quest_done, 1);
     }
 }

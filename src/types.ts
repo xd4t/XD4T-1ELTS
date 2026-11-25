@@ -153,6 +153,49 @@ export interface SkillBand {
   target: number;
 }
 
+export interface VocabQuizStatus {
+  last_quiz_at: string | null;
+  days_since_last_quiz: number | null;
+  last_quiz_score: string | null;
+  total_quizzes: number;
+  quiz_due: boolean;
+  quiz_due_reason: string;
+}
+
+export interface QuizQuestion {
+  card_id: number;
+  word: string;
+  meaning: string;
+  example: string;
+  topic: string;
+  question_type: 'meaning_mcq' | 'cloze_mcq' | 'typing';
+  prompt_text: string;
+  cloze_sentence: string | null;
+  hint: string;
+  options: string[];
+}
+
+export interface QuizAnswerInput {
+  card_id: number;
+  correct: boolean;
+  gave_up: boolean;
+}
+
+export interface ForgottenVocabCard {
+  card_id: number;
+  word: string;
+  meaning: string;
+  example: string;
+}
+
+export interface QuizSubmitResult {
+  total_questions: number;
+  correct_count: number;
+  accuracy_pct: number;
+  forgotten_cards: ForgottenVocabCard[];
+  marked_quest_done: boolean;
+}
+
 export interface DashboardState {
   settings: SettingsPublic;
   streak: number;
@@ -162,6 +205,7 @@ export interface DashboardState {
   skill_bands: SkillBand[];
   due_vocab_count: number;
   total_vocab_count: number;
+  quiz_status: VocabQuizStatus;
   roadmap: RoadmapItem[];
   error_logs: ErrorLog[];
   practice_scores: PracticeScore[];

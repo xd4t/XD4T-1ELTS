@@ -2,7 +2,7 @@
 
 [← Quay lại trang giới thiệu chính](../README.md)
 
-Chào bạn! Nếu bạn mới bắt đầu tự học IELTS hoặc không rành công nghệ, hướng dẫn này sẽ chỉ bạn từng bước thật chậm, rõ ràng và đúng theo từng nút bấm trong app **XD4T IELTS (v1.4.0)**.
+Chào bạn! Nếu bạn mới bắt đầu tự học IELTS hoặc không rành công nghệ, hướng dẫn này sẽ chỉ bạn từng bước thật chậm, rõ ràng và đúng theo từng nút bấm trong app **XD4T IELTS (v1.5.0)**.
 
 ---
 
@@ -132,6 +132,14 @@ Tab **`[3] TỪ VỰNG SRS`** giúp bạn học từ vựng **hoàn toàn offlin
    - **`[4] DỄ · 7 ngày`**: nhớ rất chắc → hẹn ôn lại sau 7 ngày.
 
 ![Học từ vựng SRS](screenshots/03-vocab-srs-dark.png)
+
+### 5.1. Quiz kiểm tra từ vựng định kỳ & tự đẩy từ quên về SRS (v1.5.0)
+- Vào **Thứ 5** và **Chủ Nhật** hằng tuần (hoặc khi quá **3 ngày** chưa kiểm tra), app tự động nhắc ở tab **`[1] HÔM NAY`** và thêm nhiệm vụ Quiz vào lịch học.
+- Trong tab **`[3] TỪ VỰNG SRS`**, chuyển sang mục **`📝 QUIZ KIỂM TRA TRÍ NHỚ`** để làm bài kiểm tra **100% offline** với 3 chế độ:
+  - **`⚡ Hỗn hợp (Khuyên dùng)`**: 7 câu trắc nghiệm (chọn nghĩa + điền ngữ cảnh) và 3 câu gõ từ cuối bài.
+  - **`🔘 Trắc nghiệm 4 đáp án`**: chọn nhanh 1 trong 4 cụm từ phù hợp.
+  - **`⌨️ Gõ từ Active Recall`**: nhìn nghĩa tiếng Việt & gợi ý chữ cái đầu để gõ lại cụm từ chính xác.
+- Bất kỳ từ nào bạn **chọn sai** hoặc bấm **`❓ Quên từ này`** sẽ tự động được reset về đầu hàng đợi SRS hôm nay. Ở màn tổng kết, bấm **`↺ ÔN LẠI NGAY X TỪ VỪA QUÊN →`** để lật lại ngay các thẻ vừa quên.
 
 ---
 

@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default capabilities for XD4T IELTS 6.5","local":true,"windows":["main"],"permissions":["core:default","notification:default","autostart:default","opener:default"]}}
+{"default":{"identifier":"default","description":"Default capabilities for XD4T IELTS 6.5","local":true,"windows":["main"],"permissions":["core:default","core:window:allow-set-title","notification:default","autostart:default","opener:default"]}}

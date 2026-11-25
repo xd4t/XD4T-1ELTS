@@ -152,6 +152,54 @@ pub struct SkillBand {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VocabQuizStatus {
+    pub last_quiz_at: Option<String>,
+    pub days_since_last_quiz: Option<i64>,
+    pub last_quiz_score: Option<String>,
+    pub total_quizzes: i64,
+    pub quiz_due: bool,
+    pub quiz_due_reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuizQuestion {
+    pub card_id: i64,
+    pub word: String,
+    pub meaning: String,
+    pub example: String,
+    pub topic: String,
+    pub question_type: String,
+    pub prompt_text: String,
+    pub cloze_sentence: Option<String>,
+    pub hint: String,
+    pub options: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuizAnswerInput {
+    pub card_id: i64,
+    pub correct: bool,
+    pub gave_up: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForgottenVocabCard {
+    pub card_id: i64,
+    pub word: String,
+    pub meaning: String,
+    pub example: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuizSubmitResult {
+    pub total_questions: i64,
+    pub correct_count: i64,
+    pub accuracy_pct: i64,
+    pub forgotten_cards: Vec<ForgottenVocabCard>,
+    pub marked_quest_done: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardState {
     pub settings: SettingsPublic,
     pub streak: i64,
@@ -161,6 +209,7 @@ pub struct DashboardState {
     pub skill_bands: Vec<SkillBand>,
     pub due_vocab_count: i64,
     pub total_vocab_count: i64,
+    pub quiz_status: VocabQuizStatus,
     pub roadmap: Vec<RoadmapItem>,
     pub error_logs: Vec<ErrorLog>,
     pub recent_essays: Vec<Essay>,
