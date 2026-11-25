@@ -1,0 +1,14 @@
+node_modules/
+dist/
+src-tauri/target/
+release-dist/
+qa-shots/
+taskbar-widget/shots/
+taskbar-widget/*.exe
+.env*
+*.db
+*.db-shm
+*.db-wal
+*.seed
+*.qa_bak
+*.docs_bak
