@@ -99,6 +99,7 @@ pub async fn grade_writing_with_gemini(
     prompt: &str,
     content: &str,
     focus_notes: &[String],
+    target_band: f64,
 ) -> Result<(GradeResult, String), String> {
     let key = api_key.trim();
     if key.is_empty() {
@@ -106,8 +107,24 @@ pub async fn grade_writing_with_gemini(
     }
 
     let focus_rules = build_focus_rules(focus_notes);
+    let is_80 = target_band >= 7.5;
+    let (examiner_role, right_desc, rewrite_desc, score_examples) = if is_80 {
+        (
+            "You are a strict IELTS Writing Band 8.0 Examiner.",
+            "corrected Band 7.5-8.0 phrase",
+            "A natural Band 7.5-8.0+ rewrite demonstrating C1-C2 collocations, academic hedging, and error-free complex grammar.",
+            "6.0, 6.5, 7.0, 7.5, 8.0",
+        )
+    } else {
+        (
+            "You are a strict IELTS Writing Examiner.",
+            "corrected Band 6.5 phrase",
+            "A natural Band 6.5-7.0 rewrite of the student's response.",
+            "4.5, 5.0, 5.5, 6.0, 6.5",
+        )
+    };
     let system_instruction = format!(
-        r#"You are a strict IELTS Writing Examiner. Grade the student's response and return ONLY valid JSON matching this exact schema (no markdown fences):
+        r#"{examiner_role} Grade the student's response and return ONLY valid JSON matching this exact schema (no markdown fences):
 {{
   "ta": 5.5,
   "cc": 5.5,
@@ -116,12 +133,12 @@ pub async fn grade_writing_with_gemini(
   "overall": 5.0,
   "summary_vi": "Nhận xét ngắn gọn bằng tiếng Việt (1-2 câu) về điểm mạnh/yếu và thống kê nhanh các lỗi nền nếu có.",
   "corrections": [
-    {{"wrong": "exact wrong phrase from student text", "right": "corrected Band 6.5 phrase", "category": "Tên nhóm lỗi ngắn gọn", "reason": "Giải thích ngắn bằng tiếng Việt"}}
+    {{"wrong": "exact wrong phrase from student text", "right": "{right_desc}", "category": "Tên nhóm lỗi ngắn gọn", "reason": "Giải thích ngắn bằng tiếng Việt"}}
   ],
-  "band65_rewrite": "A natural Band 6.5-7.0 rewrite of the student's response."
+  "band65_rewrite": "{rewrite_desc}"
 }}
 Rules:
-1. Scores must be in 0.5 increments (e.g. 4.5, 5.0, 5.5, 6.0, 6.5).
+1. Scores must be in 0.5 increments (e.g. {score_examples}).
 2. Pay special attention to the student's recurring error areas:
 {focus_rules}
 3. Provide up to 6 most impactful corrections."#

@@ -2,7 +2,7 @@
 
 [← Quay lại trang giới thiệu chính](../README.md)
 
-Chào bạn! Nếu bạn mới bắt đầu tự học IELTS hoặc không rành công nghệ, hướng dẫn này sẽ chỉ bạn từng bước thật chậm, rõ ràng và đúng theo từng nút bấm trong app **XD4T IELTS 6.5 (v1.3.0)**.
+Chào bạn! Nếu bạn mới bắt đầu tự học IELTS hoặc không rành công nghệ, hướng dẫn này sẽ chỉ bạn từng bước thật chậm, rõ ràng và đúng theo từng nút bấm trong app **XD4T IELTS (v1.4.0)**.
 
 ---
 
@@ -26,8 +26,10 @@ Ngay lần đầu mở app, màn hình **Chào mừng** sẽ hiện ra với **3
 1. **Bước 1 — Chọn phong cách (`1. Chọn phong cách`):**
    - Chọn 1 trong 4 màu giao diện dịu mắt: **Pastel Nam** (xanh dịu), **Pastel Nữ** (hồng đào), **Mono Đen** (nền tối), hoặc **Mono Trắng** (nền sáng).
    - Bấm **Tiếp tục →**.
-2. **Bước 2 — Lộ trình học (`2. Lộ trình học`):**
-   - App có sẵn **Lộ trình mẫu 24 tuần (Band 6.5)**. Nếu bạn mới bắt đầu, bấm **✓ Dùng lộ trình mẫu 24 tuần** rồi bấm **Tiếp tục →**.
+2. **Bước 2 — Chọn cấp độ & Lộ trình học (`2. Lộ trình học`):**
+   - App tích hợp sẵn **2 chế độ lộ trình 24 tuần** (xoay vòng nhiệm vụ T2 → CN & gắn KPI định lượng từng tuần):
+     - **🎯 Lộ trình Tiêu chuẩn · Aim 6.5 (Vùng đệm 7.0):** Nếu bạn đang ở nền **4.5–5.5**, hãy đi chắc từ chế độ này để diệt lỗi gốc, nắm 5 khung Writing và xây nền vững.
+     - **🚀 Lộ trình Nâng cao · Aim 8.0:** Khi đã **vững nền 6.5+** (Listening/Reading ≥ 27–30/40 câu, nắm chắc câu phức), hãy bật chế độ này (hoặc đổi bất cứ lúc nào trong **Cài đặt**) để mở khóa 40 từ C1–C2 & Hedging cùng tiêu chí chấm Band 8.0.
    - Nếu muốn tạo lộ trình riêng theo ngày thi, bạn có thể bấm **📋 Copy câu lệnh gửi ChatGPT / Gemini** hoặc **📂 Mở trình nạp file .md** (xem chi tiết ở Phần 6).
 3. **Bước 3 — Chấm Writing AI (`3. Chấm Writing AI`):**
    - Bạn có thể gắn **Google Gemini API Key miễn phí** ngay tại đây, hoặc bỏ qua để dùng cách **Copy Prompt** gửi sang ChatGPT/Gemini web miễn phí 100%.

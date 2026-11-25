@@ -86,10 +86,10 @@ async fn grade_writing(
     prompt: String,
     content: String,
 ) -> Result<GradeResponseDto, String> {
-    let (api_key, model, focus_notes) = {
+    let (api_key, model, focus_notes, target_band) = {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         let s = db::get_settings_raw(&conn)?;
-        (s.gemini_api_key, s.gemini_model, s.writing_focus_notes)
+        (s.gemini_api_key, s.gemini_model, s.writing_focus_notes, s.target_band)
     };
 
     let (result, endpoint) = ai::grade_writing_with_gemini(
@@ -99,6 +99,7 @@ async fn grade_writing(
         &prompt,
         &content,
         &focus_notes,
+        target_band,
     )
     .await?;
 
@@ -176,6 +177,14 @@ fn toggle_roadmap_item(state: State<'_, AppState>, id: i64) -> Result<DashboardS
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     db::toggle_roadmap_item(&conn, id)?;
     db::get_dashboard_state(&conn)
+}
+
+#[tauri::command]
+fn set_study_level(state: State<'_, AppState>, level: String) -> Result<DashboardState, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let dash = db::set_study_level(&conn, &level)?;
+    let _ = db::write_widget_status(&conn);
+    Ok(dash)
 }
 
 #[tauri::command]
@@ -642,6 +651,7 @@ pub fn run() {
             add_error_log,
             add_practice_score,
             toggle_roadmap_item,
+            set_study_level,
             update_settings,
             clear_gemini_api_key,
             test_gemini_connection,

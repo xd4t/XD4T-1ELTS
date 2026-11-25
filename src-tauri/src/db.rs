@@ -1,6 +1,6 @@
-use chrono::{Duration, Local, NaiveDate};
+use chrono::{Datelike, Duration, Local, NaiveDate, Weekday};
 use rusqlite::{params, Connection, OptionalExtension};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -9,7 +9,10 @@ use crate::models::{
     SettingsPublic, SkillBand, StudyDay, VocabCard,
 };
 use crate::roadmap_parser::{parse_roadmap_markdown, ParsedQuest};
-use crate::seed_data::{default_writing_prompts, ROADMAP_SEEDS, VOCAB_SEEDS};
+use crate::seed_data::{
+    default_writing_prompts_for_band, ROADMAP_SEEDS_65, ROADMAP_SEEDS_80, VOCAB_SEEDS,
+    VOCAB_SEEDS_80,
+};
 use crate::srs::apply_sm2;
 
 pub fn default_writing_checklist() -> Vec<String> {
@@ -23,11 +26,30 @@ pub fn default_writing_checklist() -> Vec<String> {
     ]
 }
 
+pub fn default_writing_checklist_80() -> Vec<String> {
+    vec![
+        "Trả lời đủ mọi vế đề & lập trường nhất quán (TR/TA 7.5+)".to_string(),
+        "Mạch ý tự nhiên (tránh lạm dụng Firstly/Moreover cứng nhắc)".to_string(),
+        "Collocations C1 tự nhiên, tránh lặp từ & văn nói".to_string(),
+        "Hedging học thuật (tend to, arguably, to a large extent)".to_string(),
+        "Đa dạng câu phức (mệnh đề quan hệ rút gọn, phân từ, đảo ngữ nhẹ)".to_string(),
+        "Sạch lỗi nhỏ (mạo từ, giới từ, thì, dấu câu) để đạt GRA 7.5+".to_string(),
+    ]
+}
+
 pub fn default_writing_focus_notes() -> Vec<String> {
     vec![
         "Nhóm 1: Subject-verb agreement (everybody knows), countable nouns needing a/an/the or -s (humans/people), articles.".to_string(),
         "Nhóm 2: Confused words (change/chance, choose/choice, effect/affect) and word family (harmful vs harmfully, In addition vs In additionally).".to_string(),
         "Nhóm 3: Comma splices (joining 2 independent clauses with a comma) and sentence fragments.".to_string(),
+    ]
+}
+
+pub fn default_writing_focus_notes_80() -> Vec<String> {
+    vec![
+        "Over-generalization & thiếu hedging: thay khẳng định tuyệt đối bằng tend to, arguably, to a considerable extent.".to_string(),
+        "Mechanical linkers (Firstly/Moreover/In conclusion): dùng referencing, substitution và lexical cohesion tự nhiên.".to_string(),
+        "Imprecise collocations, wordiness & subtle GRA slips (mạo từ, giới từ, thì) kéo tụt điểm 7.5–8.0.".to_string(),
     ]
 }
 
@@ -40,12 +62,30 @@ pub fn default_skill_targets() -> BTreeMap<String, f64> {
     map
 }
 
+pub fn default_skill_targets_80() -> BTreeMap<String, f64> {
+    let mut map = BTreeMap::new();
+    map.insert("Listening".to_string(), 8.5);
+    map.insert("Reading".to_string(), 8.5);
+    map.insert("Speaking".to_string(), 7.5);
+    map.insert("Writing".to_string(), 7.5);
+    map
+}
+
 pub fn default_phase_labels() -> BTreeMap<i64, String> {
     let mut map = BTreeMap::new();
     map.insert(1, "GĐ1 · Diệt lỗi nền & 5 khung T2 + 3 biểu đồ T1 (T1–7)".to_string());
     map.insert(2, "GĐ2 · Tăng tốc & 6 cấu trúc nâng cao (T8–15)".to_string());
     map.insert(3, "GĐ3 · Vùng đệm 7.0 & Forecast thực chiến (T16–21)".to_string());
     map.insert(4, "GĐ4 · Nước rút phòng thi (T22–24)".to_string());
+    map
+}
+
+pub fn default_phase_labels_80() -> BTreeMap<i64, String> {
+    let mut map = BTreeMap::new();
+    map.insert(1, "GĐ1 · Phá trần 6.5 lên 7.0+ (Tuần 1–6)".to_string());
+    map.insert(2, "GĐ2 · Nâng tầm C1–C2 & Phản biện Band 7.5–8.0 (Tuần 7–14)".to_string());
+    map.insert(3, "GĐ3 · Chốt chuẩn Band 8.0 & 12 chủ đề trừu tượng (Tuần 15–20)".to_string());
+    map.insert(4, "GĐ4 · Nước rút Peak Performance phòng thi (Tuần 21–24)".to_string());
     map
 }
 
@@ -267,7 +307,7 @@ pub fn init_schema_and_seed(conn: &Connection, seed_path: Option<&Path>) -> Resu
         .query_row("SELECT COUNT(*) FROM roadmap_items", [], |r| r.get(0))
         .map_err(|e| e.to_string())?;
     if roadmap_count == 0 {
-        for item in ROADMAP_SEEDS {
+        for item in ROADMAP_SEEDS_65 {
             conn.execute(
                 "INSERT INTO roadmap_items (track, phase, week_label, title, done)
                  VALUES ('ielts', ?1, ?2, ?3, 0)",
@@ -358,6 +398,86 @@ fn import_seed_key_if_needed(conn: &Connection, seed_path: &Path) -> Result<(), 
     Ok(())
 }
 
+pub fn default_quests_for_weekday(weekday: Weekday, is_80: bool) -> [(&'static str, &'static str, i64); 3] {
+    if is_80 {
+        match weekday {
+            Weekday::Mon => [
+                ("Ôn 12 cụm từ C1–C2 & Hedging (SRS)", "Thứ 2 · Collocations Band 7.5–8.0", 8),
+                ("Writing: Luyện cấu trúc C1 & viết lại đoạn cũ nâng Band 7.5+", "Sửa lỗi từ Sổ lỗi · nâng +1.0 band", 15),
+                ("Listening: Soi transcript & bẫy Distractors Part 3–4 (Study4)", "Bắt nối âm, đuôi s/ed & bẫy đổi ý", 12),
+            ],
+            Weekday::Tue => [
+                ("Ôn 12 cụm từ C1–C2 & Hedging (SRS)", "Thứ 3 · Collocations Band 7.5–8.0", 8),
+                ("Reading: 1 Passage 2–3 trên Study4 bấm giờ 18p & nhập điểm", "Phân tích cấu trúc đoạn & phạm vi ý", 15),
+                ("Lập 5 cặp Paraphrase C1 từ bài đọc vào Sổ lỗi/SRS", "Săn từ đồng nghĩa học thuật Passage 3", 10),
+            ],
+            Weekday::Wed => [
+                ("Ôn 12 cụm từ C1–C2 & Hedging (SRS)", "Thứ 4 · Collocations Band 7.5–8.0", 8),
+                ("Writing: Viết Mở bài + 1 Body (PEEL + Counter-argument) & chấm AI", "Lập luận sâu + hedging chuẩn 7.5+", 15),
+                ("Speaking: Nói lại luận điểm vừa viết theo A.R.E.A trong 2 phút", "Ghi âm tự nghe · chuyển từ viết sang nói", 10),
+            ],
+            Weekday::Thu => [
+                ("Ôn 12 cụm từ C1–C2 & Hedging (SRS)", "Thứ 5 · Collocations Band 7.5–8.0", 8),
+                ("Listening: Luyện Part 3 & Part 4 trên Study4 bấm giờ & nhập điểm", "Bắt bẫy distractor agreement", 15),
+                ("Phân tích câu sai & ghi bẫy đổi ý vào Sổ lỗi", "Chống mất điểm oan Part 3–4", 10),
+            ],
+            Weekday::Fri => [
+                ("Ôn 12 cụm từ C1–C2 & Hedging (SRS)", "Thứ 6 · Collocations Band 7.5–8.0", 8),
+                ("Speaking: Luyện 1 đề Part 2 (2 phút) + 3 câu trừu tượng Part 3", "Mở rộng lập luận đa chiều · tự nhiên", 15),
+                ("Reading tốc độ: Luyện riêng T/F/NG suy luận hoặc Matching Headings", "Xử lý dạng bẫy hay mất điểm", 10),
+            ],
+            Weekday::Sat => [
+                ("Ôn 12 cụm từ C1–C2 & Hedging (SRS)", "Thứ 7 · Collocations Band 7.5–8.0", 8),
+                ("Writing Full: Viết 1 bài hoàn chỉnh + soát Checklist 3p & chấm AI 7.5+", "Bấm giờ chuẩn · kiểm tra 6 lỗi tinh tế", 20),
+                ("Reading Full Test (3 Passages bấm giờ 54p trên Study4) & nhập điểm", "Mục tiêu 35–38/40 câu", 15),
+            ],
+            Weekday::Sun => [
+                ("Writing Rewrite: Viết lại đoạn yếu nhất của bài T7 đạt chuẩn 7.5–8.0", "Chủ nhật · Nâng cấp lập luận & collocation", 15),
+                ("Listening Full Test (4 Parts trên Study4) & nhập điểm", "Mục tiêu 36–39/40 câu", 15),
+                ("Rà soát Sổ lỗi tuần & ôn từ vựng chủ đề mới", "Tổng kết tuần · giữ vững nhịp 8.0", 10),
+            ],
+        }
+    } else {
+        match weekday {
+            Weekday::Mon => [
+                ("Ôn 10 thẻ Collocations & Word Family (SRS)", "Thứ 2 · SRS Flashcards · giữ chuỗi mỗi ngày", 8),
+                ("Writing: Sửa 3 nhóm lỗi từ Sổ lỗi / luyện 6 cấu trúc câu viết lại bài cũ", "Độ chính xác / Cấu trúc · GĐ1–2", 15),
+                ("Listening Dictation: Chép chính tả 1 đoạn ngắn bắt đuôi s/ed", "DailyDictation · bắt nối âm & âm cuối", 12),
+            ],
+            Weekday::Tue => [
+                ("Ôn 10 thẻ Collocations (SRS)", "Thứ 3 · SRS Flashcards · giữ chuỗi mỗi ngày", 8),
+                ("Reading: 1 Passage trên Study4 bấm giờ 20p & chữa theo Linearthinking", "Phân tích chủ–vị & bẫy từ tuyệt đối", 15),
+                ("Lập 5 cặp Paraphrase từ bài đọc & nhập điểm Reading", "Ghi cặp đồng nghĩa vào Sổ lỗi / SRS", 10),
+            ],
+            Weekday::Wed => [
+                ("Ôn 10 thẻ Collocations (SRS)", "Thứ 4 · SRS Flashcards · giữ chuỗi mỗi ngày", 8),
+                ("Writing: Ôn khung dạng đề tuần + viết Mở bài & 1 Body (chấm AI)", "Soát checklist 3p trước khi nộp AI", 15),
+                ("Speaking: Nói lại chính luận điểm vừa viết trong 2 phút (ghi âm)", "Chuyển ý từ Writing sang Speaking", 10),
+            ],
+            Weekday::Thu => [
+                ("Ôn 10 thẻ Collocations (SRS)", "Thứ 5 · SRS Flashcards · giữ chuỗi mỗi ngày", 8),
+                ("Listening: Làm 2 Sections trên Study4 bấm giờ & soi Transcript", "Cambridge Practice · nghe chủ động", 15),
+                ("Đánh dấu bẫy Distractors & nhập điểm Listening", "Chép chính tả lại đúng câu nghe sai", 10),
+            ],
+            Weekday::Fri => [
+                ("Ôn 10 thẻ Collocations (SRS)", "Thứ 6 · SRS Flashcards · giữ chuỗi mỗi ngày", 8),
+                ("Speaking: Luyện Part 1/2/3 theo khung A.R.E.A (chú ý âm cuối & chia động từ)", "Ghi âm tự nghe lại sửa lỗi thì", 15),
+                ("Reading tốc độ: Luyện riêng 1 dạng hay sai (T/F/NG hoặc Matching Headings)", "Xử lý dạng bài hay mất điểm", 10),
+            ],
+            Weekday::Sat => [
+                ("Ôn 10 thẻ Collocations (SRS)", "Thứ 7 · SRS Flashcards · giữ chuỗi mỗi ngày", 8),
+                ("Writing Full: Viết 1 bài hoàn chỉnh + soát Checklist 3p & chấm AI 4 tiêu chí", "Bấm giờ chuẩn · cập nhật Sổ lỗi", 20),
+                ("Reading Full Test trên Study4 bấm giờ & nhập điểm", "Mục tiêu vùng đệm 30–34/40 câu", 15),
+            ],
+            Weekday::Sun => [
+                ("Writing Rewrite: Bắt buộc viết lại đoạn yếu nhất của bài T7 đạt ≥ 6.5", "Chủ nhật · sửa triệt để lỗi đoạn yếu", 15),
+                ("Listening Full Test trên Study4 & nhập điểm", "Làm 4 Sections bấm giờ + chữa 20p", 15),
+                ("Tổng kết Sổ lỗi tuần & ôn 12 cụm từ chủ đề mới", "Từ vựng ngữ cảnh · nạp vào SRS", 10),
+            ],
+        }
+    }
+}
+
 pub fn ensure_today_quests(conn: &Connection, today: &str) -> Result<(), String> {
     let count: i64 = conn
         .query_row(
@@ -387,23 +507,18 @@ pub fn ensure_today_quests(conn: &Connection, today: &str) -> Result<(), String>
                 .map_err(|e| e.to_string())?;
             }
         } else {
-            let defaults = [
-                (
-                    "Ôn 10 thẻ Collocation (SRS)",
-                    "SRS Flashcards · giữ chuỗi mỗi ngày",
-                    8_i64,
-                ),
-                (
-                    "Viết 1 đoạn Body Paragraph (~90 từ) & chấm AI",
-                    "Chủ đề tủ IELTS · luyện câu chuẩn 6.5",
-                    15_i64,
-                ),
-                (
-                    "Làm 1 Passage Reading trên Study4 & nhập điểm",
-                    "Cambridge Practice · bấm giờ 15–20 phút",
-                    12_i64,
-                ),
-            ];
+            let target_band: f64 = conn
+                .query_row(
+                    "SELECT COALESCE(target_band, 7.0) FROM settings WHERE id = 1",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap_or(7.0);
+            let is_80 = target_band >= 7.5;
+            let weekday = NaiveDate::parse_from_str(today, "%Y-%m-%d")
+                .map(|d| d.weekday())
+                .unwrap_or_else(|_| Local::now().date_naive().weekday());
+            let defaults = default_quests_for_weekday(weekday, is_80);
             for (title, meta, mins) in defaults {
                 conn.execute(
                     "INSERT INTO daily_quests (date, track, title, meta, minutes, done)
@@ -892,7 +1007,11 @@ pub fn get_dashboard_state(conn: &Connection) -> Result<DashboardState, String> 
     let heatmap = get_heatmap(conn, today_naive, 70)?;
 
     let raw_settings = get_settings_raw(conn)?;
-    let default_targets = default_skill_targets();
+    let default_targets = if raw_settings.target_band >= 7.5 {
+        default_skill_targets_80()
+    } else {
+        default_skill_targets()
+    };
     let mut skill_bands = Vec::new();
     for skill in ["Listening", "Reading", "Speaking", "Writing"] {
         let target = raw_settings
@@ -1017,8 +1136,179 @@ pub fn get_dashboard_state(conn: &Connection) -> Result<DashboardState, String> 
         error_logs,
         recent_essays,
         practice_scores,
-        prompts: default_writing_prompts(),
+        prompts: default_writing_prompts_for_band(raw_settings.target_band),
     })
+}
+
+fn normalize_week_key(label: &str) -> String {
+    let trimmed = label.trim();
+    if let Some(idx) = trimmed.find('(') {
+        trimmed[..idx].trim().to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+pub fn set_study_level(conn: &Connection, level: &str) -> Result<DashboardState, String> {
+    let is_80 = level.trim() == "8.0";
+    let new_target = if is_80 { 8.0 } else { 7.0 };
+
+    let skill_targets = if is_80 {
+        default_skill_targets_80()
+    } else {
+        default_skill_targets()
+    };
+    let checklist = if is_80 {
+        default_writing_checklist_80()
+    } else {
+        default_writing_checklist()
+    };
+    let focus_notes = if is_80 {
+        default_writing_focus_notes_80()
+    } else {
+        default_writing_focus_notes()
+    };
+    let phase_labels = if is_80 {
+        default_phase_labels_80()
+    } else {
+        default_phase_labels()
+    };
+
+    let tgt_json = serde_json::to_string(&skill_targets).map_err(|e| e.to_string())?;
+    let chk_json = serde_json::to_string(&checklist).map_err(|e| e.to_string())?;
+    let foc_json = serde_json::to_string(&focus_notes).map_err(|e| e.to_string())?;
+    let ph_json = serde_json::to_string(&phase_labels).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "UPDATE settings
+         SET target_band = ?1,
+             skill_targets_json = ?2,
+             writing_checklist_json = ?3,
+             writing_focus_json = ?4,
+             phase_labels_json = ?5,
+             daily_quests_template_json = '[]'
+         WHERE id = 1",
+        params![new_target, tgt_json, chk_json, foc_json, ph_json],
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Only update baseline practice_scores if user has NOT entered any custom test scores
+    let user_score_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM practice_scores
+             WHERE source NOT IN ('Test đầu vào (02/11/2026)', 'Nền đầu vào Aim 8.0')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let total_score_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM practice_scores", [], |r| r.get(0))
+        .unwrap_or(0);
+
+    let today_naive = Local::now().date_naive();
+    let today = today_naive.format("%Y-%m-%d").to_string();
+
+    if user_score_count == 0 && total_score_count <= 4 {
+        conn.execute("DELETE FROM practice_scores", [])
+            .map_err(|e| e.to_string())?;
+        let seeds = if is_80 {
+            [
+                ("Listening", "Nền đầu vào Aim 8.0", 7.0, "Mục tiêu 8.5 · Nền 6.5+"),
+                ("Reading", "Nền đầu vào Aim 8.0", 7.0, "Mục tiêu 8.5 · Nền 6.5+"),
+                ("Speaking", "Nền đầu vào Aim 8.0", 6.5, "Mục tiêu 7.5 · Nền 6.5+"),
+                ("Writing", "Nền đầu vào Aim 8.0", 6.5, "Mục tiêu 7.5 · Nền 6.5+"),
+            ]
+        } else {
+            [
+                ("Listening", "Test đầu vào (02/11/2026)", 5.5, "Mục tiêu 7.5 · Sàn 7.0"),
+                ("Reading", "Test đầu vào (02/11/2026)", 5.0, "Mục tiêu 7.0 · Sàn 6.5"),
+                ("Speaking", "Test đầu vào (02/11/2026)", 5.5, "Mục tiêu 6.5 · Sàn 6.0"),
+                ("Writing", "Test đầu vào (02/11/2026)", 4.5, "Mục tiêu 6.0 · Sàn 5.5"),
+            ]
+        };
+        for (skill, src, score, note) in seeds {
+            conn.execute(
+                "INSERT INTO practice_scores (skill, source, score, note, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![skill, src, score, note, today],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+
+    // Preserve roadmap completion status by week_label
+    let mut done_map: HashMap<String, bool> = HashMap::new();
+    {
+        let mut stmt = conn
+            .prepare("SELECT week_label, done FROM roadmap_items WHERE track = 'ielts'")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? != 0)))
+            .map_err(|e| e.to_string())?;
+        for row in rows.flatten() {
+            done_map.insert(normalize_week_key(&row.0), row.1);
+        }
+    }
+
+    conn.execute("DELETE FROM roadmap_items WHERE track = 'ielts'", [])
+        .map_err(|e| e.to_string())?;
+    let roadmap_seeds = if is_80 { ROADMAP_SEEDS_80 } else { ROADMAP_SEEDS_65 };
+    for item in roadmap_seeds {
+        let is_done = done_map
+            .get(&normalize_week_key(item.week_label))
+            .copied()
+            .unwrap_or(false);
+        conn.execute(
+            "INSERT INTO roadmap_items (track, phase, week_label, title, done)
+             VALUES ('ielts', ?1, ?2, ?3, ?4)",
+            params![item.phase, item.week_label, item.title, if is_done { 1 } else { 0 }],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    // Add 40 C1-C2 vocab cards if switching to 8.0 (never duplicate or overwrite SRS)
+    if is_80 {
+        for v in VOCAB_SEEDS_80 {
+            conn.execute(
+                "INSERT INTO vocab_cards (track, topic, word, meaning, example, ease, interval_days, reps, due_date)
+                 SELECT 'ielts', ?1, ?2, ?3, ?4, 2.5, 0, 0, ?5
+                 WHERE NOT EXISTS (SELECT 1 FROM vocab_cards WHERE word = ?2)",
+                params![v.topic, v.word, v.meaning, v.example, today],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+
+    // Update today's 3 daily quests while preserving done status by position
+    let mut prev_done: Vec<bool> = Vec::new();
+    {
+        let mut stmt = conn
+            .prepare("SELECT done FROM daily_quests WHERE date = ?1 AND track = 'ielts' ORDER BY id ASC")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![today], |r| Ok(r.get::<_, i64>(0)? != 0))
+            .map_err(|e| e.to_string())?;
+        for row in rows.flatten() {
+            prev_done.push(row);
+        }
+    }
+    conn.execute(
+        "DELETE FROM daily_quests WHERE date = ?1 AND track = 'ielts'",
+        params![today],
+    )
+    .map_err(|e| e.to_string())?;
+
+    let defaults = default_quests_for_weekday(today_naive.weekday(), is_80);
+    for (idx, (title, meta, mins)) in defaults.iter().enumerate() {
+        let was_done = prev_done.get(idx).copied().unwrap_or(false);
+        conn.execute(
+            "INSERT INTO daily_quests (date, track, title, meta, minutes, done)
+             VALUES (?1, 'ielts', ?2, ?3, ?4, ?5)",
+            params![today, title, meta, mins, if was_done { 1 } else { 0 }],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    get_dashboard_state(conn)
 }
 
 #[derive(serde::Serialize)]
@@ -1594,5 +1884,61 @@ mod tests {
         assert!(validate_backup_file(&wrong_db).is_err());
 
         let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn set_study_level_switches_between_65_and_80_cleanly() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema_and_seed(&conn, None).unwrap();
+
+        let d0 = get_dashboard_state(&conn).unwrap();
+        assert_eq!(d0.settings.target_band, 7.0);
+        assert_eq!(d0.total_vocab_count, 40);
+        // Mark Tuần 1 done before switching
+        toggle_roadmap_item(&conn, d0.roadmap[0].id).unwrap();
+
+        let d80 = set_study_level(&conn, "8.0").unwrap();
+        assert_eq!(d80.settings.target_band, 8.0);
+        assert_eq!(d80.total_vocab_count, 80);
+        assert_eq!(d80.roadmap.len(), 24);
+        assert!(d80.roadmap[0].done); // Preserved!
+        assert_eq!(d80.skill_bands[0].target, 8.5);
+        assert_eq!(d80.skill_bands[1].target, 8.5);
+        assert_eq!(d80.skill_bands[2].target, 7.5);
+        assert_eq!(d80.skill_bands[3].target, 7.5);
+        assert_eq!(d80.skill_bands[0].current, 7.0); // Fresh DB baseline for 8.0
+
+        // Switching to 8.0 again does not duplicate vocab cards
+        let d80_again = set_study_level(&conn, "8.0").unwrap();
+        assert_eq!(d80_again.total_vocab_count, 80);
+
+        // User enters a real practice score, then switches back to 6.5 -> score is preserved!
+        add_practice_score(&conn, "Reading", "Cam 16 T1", 8.0, "35/40").unwrap();
+        let d65 = set_study_level(&conn, "6.5").unwrap();
+        assert_eq!(d65.settings.target_band, 7.0);
+        assert_eq!(d65.skill_bands[1].target, 7.0);
+        assert_eq!(d65.skill_bands[1].current, 8.0); // User score preserved!
+        assert!(d65.roadmap[0].done);
+    }
+
+    #[test]
+    fn weekday_quest_rotation_covers_all_7_days_for_both_tracks() {
+        for is_80 in [false, true] {
+            let mut titles = std::collections::HashSet::new();
+            for wd in [
+                Weekday::Mon,
+                Weekday::Tue,
+                Weekday::Wed,
+                Weekday::Thu,
+                Weekday::Fri,
+                Weekday::Sat,
+                Weekday::Sun,
+            ] {
+                let q = default_quests_for_weekday(wd, is_80);
+                assert_eq!(q.len(), 3);
+                titles.insert(q[1].0);
+            }
+            assert_eq!(titles.len(), 7);
+        }
     }
 }

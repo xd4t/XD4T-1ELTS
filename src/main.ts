@@ -141,9 +141,30 @@ function getCurrentPrompt(): WritingPrompt | undefined {
   );
 }
 
+function renderLevelCards(is80: boolean, extraClass: string): string {
+  return `
+    <div class="level-cards">
+      <button type="button" class="level-card ${extraClass} ${!is80 ? 'active' : ''}" data-pick-level="6.5">
+        <div class="level-card-title">🎯 Lộ trình Tiêu chuẩn · Aim 6.5 (Vùng đệm 7.0)</div>
+        <div class="level-card-desc">Dành cho nền 4.5–5.5 · Diệt lỗi gốc, nắm 5 khung Writing &amp; săn 30–34/40 câu (Khuyên dùng cho đa số người tự học)</div>
+      </button>
+      <button type="button" class="level-card ${extraClass} ${is80 ? 'active' : ''}" data-pick-level="8.0">
+        <div class="level-card-title">🚀 Lộ trình Nâng cao · Aim 8.0 (Độ khó cao)</div>
+        <div class="level-card-desc">Khuyến khích khi nền đã vững 6.5+ · Từ vựng C1–C2 &amp; Hedging, phản biện sâu, săn 36–38/40 câu</div>
+      </button>
+    </div>
+    ${
+      is80
+        ? `<div class="level-warning-box">⚠️ Khuyến khích dành cho bạn đã vững nền Band 6.5+ (Listening/Reading đã đạt ≥ 27–30/40 câu, nắm chắc ngữ pháp câu phức). Nếu đang ở mức 5.0–6.0, bạn nên chọn Lộ trình Tiêu chuẩn 6.5 trước để xây gốc vững chắc và không bị ngợp!</div>`
+        : ''
+    }
+  `;
+}
+
 function renderApp() {
   if (!dash) return;
   const curTheme = normalizeTheme(dash.settings.theme);
+  const isAim80 = dash.settings.target_band >= 7.5;
   document.documentElement.className = `theme-${curTheme}`;
   const doneQuests = dash.quests.filter((q) => q.done).length;
   const totalQuests = dash.quests.length || 1;
@@ -163,7 +184,7 @@ function renderApp() {
   <div class="app-shell theme-${curTheme}" id="shell">
     <div class="titlebar">
       <div class="tb-left">
-        <div class="brand-pill">XD4T // IELTS 6.5</div>
+        <div class="brand-pill">${isAim80 ? 'XD4T // IELTS 8.0' : 'XD4T // IELTS 6.5'}</div>
         <div class="stat-pill"><span>THI ${esc(dash.settings.exam_date)}:</span> <b class="mono-num">${dash.days_until_exam}d</b></div>
         <div class="stat-pill"><span>STREAK:</span> <b class="mono-num">${dash.streak} ngày</b></div>
         <div class="stat-pill"><span>API:</span> <b>${dash.settings.has_api_key ? 'SẴN SÀNG' : 'CHƯA CÓ KEY'}</b></div>
@@ -284,7 +305,7 @@ function renderApp() {
               )
               .join('')}
           </select>
-          <button class="btn btn-sm" style="margin-left:auto;" id="toggleHintBtn">+ GỢI Ý KHUNG BÀI 6.5</button>
+          <button class="btn btn-sm" style="margin-left:auto;" id="toggleHintBtn">+ GỢI Ý KHUNG BÀI ${isAim80 ? '8.0' : '6.5'}</button>
         </div>
 
         <div class="grid-2">
@@ -309,7 +330,7 @@ function renderApp() {
             </div>
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:6px;flex-wrap:wrap;">
               <button class="btn btn-sm" id="copyPromptBtn">COPY PROMPT CHẤM AI</button>
-              <button class="btn btn-primary" id="gradeBtn" ${isGrading ? 'disabled' : ''}>${isGrading ? 'ĐANG CHẤM AI...' : 'CHẤM BAND 6.5 NGAY →'}</button>
+              <button class="btn btn-primary" id="gradeBtn" ${isGrading ? 'disabled' : ''}>${isGrading ? 'ĐANG CHẤM AI...' : `CHẤM BAND ${isAim80 ? '8.0' : '6.5'} NGAY →`}</button>
             </div>
             <div id="writingStatus" class="status-msg ${writingStatusErr ? 'err' : writingStatusMsg ? 'ok' : ''}" style="margin-top:6px;">${esc(writingStatusMsg)}</div>
           </div>
@@ -341,7 +362,7 @@ function renderApp() {
                 </div>
               </div>
               <div style="font-size:11.5px;">
-                <b>Bài mẫu nâng Band 6.5:</b>
+                <b>Bài mẫu nâng Band ${isAim80 ? '7.5–8.0' : '6.5'}:</b>
                 <div style="border:1px solid var(--m-line);background:var(--m-bg);padding:8px;margin-top:4px;color:var(--m-muted);">
                   ${esc(lastGrade.band65_rewrite)}
                 </div>
@@ -350,7 +371,7 @@ function renderApp() {
                 <span style="font-size:10.5px;color:var(--m-muted);">${esc(lastEndpoint)}</span>
                 <button class="btn btn-sm" id="saveErrorsBtn">+ LƯU LỖI VÀO SỔ</button>
               </div>`
-                : `<div style="color:var(--m-muted);font-size:11.5px;">Viết bài ở khung bên trái rồi bấm <b>CHẤM BAND 6.5 NGAY →</b> (hoặc dùng <b>COPY PROMPT CHẤM AI</b> miễn phí).</div>`
+                : `<div style="color:var(--m-muted);font-size:11.5px;">Viết bài ở khung bên trái rồi bấm <b>CHẤM BAND ${isAim80 ? '8.0' : '6.5'} NGAY →</b> (hoặc dùng <b>COPY PROMPT CHẤM AI</b> miễn phí).</div>`
             }
           </div>
         </div>
@@ -477,6 +498,11 @@ function renderApp() {
           ${renderThemeCards(curTheme, 'settings-theme-card')}
         </div>
 
+        <div class="form-row">
+          <label>Cấp độ lộ trình (Đổi tức thì giữa Tiêu chuẩn 6.5 &amp; Nâng cao 8.0)</label>
+          ${renderLevelCards(isAim80, 'settings-level-card')}
+        </div>
+
         <div class="step-card">
           <div class="step-head"><span>Dữ liệu học tập & Widget Taskbar Windows</span></div>
           <div class="data-actions-row">
@@ -593,14 +619,15 @@ function renderApp() {
             : welcomeStep === 2
             ? `
           <div class="step-card">
-            <div class="step-head"><span>Bước 2 — Lộ trình học của riêng bạn</span></div>
+            <div class="step-head"><span>Bước 2 — Chọn cấp độ &amp; lộ trình học của bạn</span></div>
+            ${renderLevelCards(isAim80, 'welcome-level-card')}
             <div style="font-size:11.5px;color:var(--m-muted);margin-bottom:10px;">
-              Ứng dụng đã có sẵn <b>Lộ trình mẫu 24 tuần (Band 6.5)</b>. Nếu muốn cá nhân hóa theo trình độ và ngày thi riêng, bạn có thể nhờ ChatGPT/Gemini tạo file <code>.md</code> và nạp vào app trong 1 phút.
+              App đã tích hợp sẵn cả 2 lộ trình 24 tuần chuẩn (xoay vòng T2–CN + KPI từng tuần). Nếu muốn cá nhân hóa thêm theo file riêng, bạn có thể nhờ ChatGPT/Gemini tạo file <code>.md</code> và nạp vào app:
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
               <button class="btn btn-sm" id="welcomeCopyPromptBtn" type="button">📋 Copy câu lệnh gửi ChatGPT / Gemini</button>
               <button class="btn btn-sm" id="welcomeOpenRoadmapBtn" type="button">📂 Mở trình nạp file .md</button>
-              <button class="btn btn-sm btn-primary" id="welcomeUseSampleBtn" type="button">✓ Dùng lộ trình mẫu 24 tuần</button>
+              <button class="btn btn-sm btn-primary" id="welcomeUseSampleBtn" type="button">✓ Dùng lộ trình 24 tuần (${isAim80 ? 'Aim 8.0' : 'Aim 6.5'})</button>
             </div>
             ${welcomeMsg ? `<div class="status-msg ${welcomeOk === true ? 'ok' : welcomeOk === false ? 'err' : ''}">${esc(welcomeMsg)}</div>` : ''}
           </div>
@@ -631,7 +658,7 @@ function renderApp() {
             : `
           <div class="welcome-finish-grid">
             <div class="welcome-finish-main">
-              <div class="welcome-finish-title">🎉 Xong rồi! Sẵn sàng chinh phục Band 6.5+</div>
+              <div class="welcome-finish-title">🎉 Xong rồi! Sẵn sàng chinh phục Band ${isAim80 ? '8.0' : '6.5+'}</div>
               <div class="welcome-finish-desc">
                 Mọi thứ đã sẵn sàng trên máy bạn. Từ giờ mỗi ngày chỉ cần 30 phút đều đặn nhé.
               </div>
@@ -1226,6 +1253,28 @@ function bindEvents() {
       const picked = btn.dataset.pickTheme!;
       dash.settings = await invoke('update_settings', { theme: picked });
       renderApp();
+    };
+  });
+
+  document.querySelectorAll<HTMLButtonElement>('.welcome-level-card').forEach((btn) => {
+    btn.onclick = async () => {
+      const level = btn.dataset.pickLevel!;
+      dash = await invoke<DashboardState>('set_study_level', { level });
+      welcomeMsg =
+        level === '8.0'
+          ? '✓ Đã chuyển sang Lộ trình Nâng cao Aim 8.0 (nạp sẵn 40 từ C1–C2 & lộ trình 24 tuần KPI nâng cao).'
+          : '✓ Đã chọn Lộ trình Tiêu chuẩn Aim 6.5 (Vùng đệm 7.0 · 24 tuần KPI chuẩn).';
+      welcomeOk = true;
+      renderApp();
+    };
+  });
+
+  document.querySelectorAll<HTMLButtonElement>('.settings-level-card').forEach((btn) => {
+    btn.onclick = async () => {
+      const level = btn.dataset.pickLevel!;
+      dash = await invoke<DashboardState>('set_study_level', { level });
+      renderApp();
+      document.getElementById('settingsModal')?.classList.add('open');
     };
   });
 

@@ -1238,3 +1238,53 @@ textarea.editor:focus {
   outline: 1px solid var(--m-fg);
   border-color: var(--m-fg);
 }
+
+/* Dual-Track Level Cards */
+.level-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.level-card {
+  text-align: left;
+  background: var(--m-bg2);
+  color: var(--m-fg);
+  border: 1px solid var(--m-line-strong);
+  border-radius: var(--m-radius-sm);
+  padding: 10px 11px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.level-card:hover {
+  border-color: var(--m-fg);
+}
+.level-card.active {
+  border: 2px solid var(--m-fg);
+  background: var(--m-accent-soft);
+}
+.level-card-title {
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.level-card-desc {
+  font-size: 11px;
+  color: var(--m-muted);
+  line-height: 1.4;
+}
+.level-warning-box {
+  border: 1px dashed var(--m-warn);
+  background: var(--m-bg3);
+  color: var(--m-fg);
+  border-radius: var(--m-radius-sm);
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.45;
+  margin-bottom: 10px;
+}
+@media (max-width: 640px) {
+  .level-cards {
+    grid-template-columns: 1fr;
+  }
+}
