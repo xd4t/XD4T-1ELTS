@@ -97,6 +97,7 @@ let quizAnswers: QuizAnswerInput[] = [];
 let quizFeedback: { correct: boolean; gaveUp: boolean; selectedOpt?: string; typedText?: string } | null = null;
 let quizSummary: QuizSubmitResult | null = null;
 let quizLoading = false;
+let quizSubmitting = false;
 let quizErrorMsg = '';
 let lastSyncedWindowTitle = '';
 let draftEssay = '';
@@ -316,8 +317,8 @@ function renderQuizBox(): string {
                   <div style="color:var(--m-muted);margin-top:2px;">Ví dụ: "${esc(q.example)}"</div>
                   ${!quizFeedback.correct ? `<div class="quiz-srs-badge">↺ Đã đánh dấu học lại trong SRS</div>` : ''}
                   <div style="margin-top:10px;">
-                    <button class="btn btn-primary" id="quizNextBtn" type="button">
-                      ${quizIdx + 1 >= total ? 'XEM KẾT QUẢ →' : 'CÂU TIẾP THEO →'}
+                    <button class="btn btn-primary" id="quizNextBtn" type="button" ${quizSubmitting ? 'disabled' : ''}>
+                      ${quizSubmitting ? 'ĐANG LƯU...' : quizIdx + 1 >= total ? 'XEM KẾT QUẢ →' : 'CÂU TIẾP THEO →'}
                     </button>
                   </div>
                 </div>`
@@ -381,7 +382,7 @@ function renderApp() {
     lastSyncedWindowTitle = winTitle;
     document.title = winTitle;
     try {
-      void getCurrentWindow().setTitle(winTitle);
+      void getCurrentWindow().setTitle(winTitle).catch(() => {});
     } catch {
       // Ignore outside Tauri window context
     }
@@ -1365,21 +1366,30 @@ function bindEvents() {
   const quizNextBtn = document.getElementById('quizNextBtn');
   if (quizNextBtn) {
     const goNext = async () => {
+      if (quizSubmitting) return;
       if (quizIdx + 1 < quizQuestions.length) {
         quizIdx += 1;
         quizFeedback = null;
         renderApp();
         document.getElementById('quizTypingInput')?.focus();
       } else {
-        quizSummary = await invoke<QuizSubmitResult>('submit_vocab_quiz', {
-          mode: quizMode,
-          results: quizAnswers,
-        });
-        dueCards = await invoke<VocabCard[]>('get_due_vocab');
-        dash = await invoke<DashboardState>('get_dashboard');
-        quizPhase = 'summary';
-        quizFeedback = null;
+        quizSubmitting = true;
         renderApp();
+        try {
+          quizSummary = await invoke<QuizSubmitResult>('submit_vocab_quiz', {
+            mode: quizMode,
+            results: quizAnswers,
+          });
+          dueCards = await invoke<VocabCard[]>('get_due_vocab');
+          dash = await invoke<DashboardState>('get_dashboard');
+          quizPhase = 'summary';
+          quizFeedback = null;
+        } catch (err) {
+          quizErrorMsg = `Không thể lưu kết quả Quiz: ${String(err)}`;
+        } finally {
+          quizSubmitting = false;
+          renderApp();
+        }
       }
     };
     quizNextBtn.onclick = () => { void goNext(); };

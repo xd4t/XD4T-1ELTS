@@ -979,6 +979,27 @@ pub fn get_vocab_quiz_status(conn: &Connection, today_naive: NaiveDate) -> Resul
     })
 }
 
+fn is_quiz_eligible_card(card: &VocabCard) -> bool {
+    let w = card.word.trim();
+    if w.is_empty()
+        || w.contains(" vs ")
+        || w.contains(" / ")
+        || w.contains('(')
+        || w.contains(')')
+    {
+        return false;
+    }
+    let topic_lower = card.topic.to_lowercase();
+    if topic_lower.contains("word family") || topic_lower.contains("nhầm từ") {
+        return false;
+    }
+    let w_lower = w.to_lowercase();
+    if w_lower.len() >= 3 && card.meaning.to_lowercase().contains(&w_lower) {
+        return false;
+    }
+    true
+}
+
 pub fn generate_vocab_quiz(
     conn: &Connection,
     count: Option<i64>,
@@ -1029,8 +1050,19 @@ pub fn generate_vocab_quiz(
         return Ok(Vec::new());
     }
 
-    let mut studied: Vec<VocabCard> = all_cards.iter().filter(|c| c.reps >= 1).cloned().collect();
-    let mut unstudied: Vec<VocabCard> = all_cards.iter().filter(|c| c.reps == 0).cloned().collect();
+    let eligible_cards: Vec<VocabCard> = all_cards
+        .iter()
+        .filter(|c| is_quiz_eligible_card(c))
+        .cloned()
+        .collect();
+    let active_cards = if eligible_cards.len() >= 4 {
+        eligible_cards
+    } else {
+        all_cards
+    };
+
+    let mut studied: Vec<VocabCard> = active_cards.iter().filter(|c| c.reps >= 1).cloned().collect();
+    let mut unstudied: Vec<VocabCard> = active_cards.iter().filter(|c| c.reps == 0).cloned().collect();
 
     // Prioritize studied cards that are easiest to forget (lowest ease, largest interval, earliest due_date)
     studied.sort_by(|a, b| {
@@ -1051,16 +1083,15 @@ pub fn generate_vocab_quiz(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(123456789)
-        ^ (all_cards.len() as u64 * 0x9e37_79b9);
+        ^ (active_cards.len() as u64 * 0x9e37_79b9);
 
-    let mut pool = Vec::with_capacity(all_cards.len());
+    let mut pool = Vec::with_capacity(active_cards.len());
     pool.extend(studied);
     pool.extend(unstudied);
 
     let pick_n = target_count.min(pool.len());
     let candidate_window = (pick_n + 4).min(pool.len());
     shuffle_slice(&mut pool[..candidate_window], &mut seed);
-    let selected = &pool[..pick_n];
 
     let typing_count = match mode_norm {
         "typing" => pick_n,
@@ -1075,21 +1106,50 @@ pub fn generate_vocab_quiz(
     };
     let mcq_count = pick_n.saturating_sub(typing_count);
 
+    let mut selected = pool[..pick_n].to_vec();
+    if mode_norm == "mixed" && typing_count > 0 {
+        let mut long_cards: Vec<VocabCard> = Vec::new();
+        let mut short_cards: Vec<VocabCard> = Vec::new();
+        for c in selected {
+            if c.word.split_whitespace().count() <= 3 {
+                short_cards.push(c);
+            } else {
+                long_cards.push(c);
+            }
+        }
+        let mut ordered = Vec::with_capacity(pick_n);
+        if short_cards.len() >= typing_count {
+            let split_at = short_cards.len() - typing_count;
+            ordered.extend(long_cards);
+            ordered.extend(short_cards.drain(..split_at));
+            ordered.extend(short_cards);
+        } else {
+            ordered.extend(long_cards);
+            ordered.extend(short_cards);
+        }
+        selected = ordered;
+    }
+
     let mut questions = Vec::with_capacity(pick_n);
     for (idx, card) in selected.iter().enumerate() {
-        let cloze_sentence = make_cloze_sentence(&card.example, &card.word);
+        let raw_cloze = make_cloze_sentence(&card.example, &card.word);
         let desired_type = if idx >= mcq_count {
             "typing"
-        } else if idx % 2 == 1 && cloze_sentence.is_some() {
+        } else if idx % 2 == 1 && raw_cloze.is_some() {
             "cloze_mcq"
         } else {
             "meaning_mcq"
+        };
+        let cloze_sentence = if desired_type == "meaning_mcq" {
+            None
+        } else {
+            raw_cloze
         };
 
         let options = if desired_type == "typing" {
             Vec::new()
         } else {
-            let mut distractors: Vec<String> = all_cards
+            let mut distractors: Vec<String> = active_cards
                 .iter()
                 .filter(|c| c.id != card.id && c.word != card.word)
                 .map(|c| c.word.clone())
@@ -2461,16 +2521,42 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         init_schema_and_seed(&conn, None).unwrap();
 
+        let assert_clean_question = |q: &QuizQuestion| {
+            assert!(!q.word.contains(" vs "), "word leaked vs note: {}", q.word);
+            assert!(!q.word.contains(" / "), "word leaked slash note: {}", q.word);
+            assert!(!q.word.contains('('), "word leaked paren note: {}", q.word);
+            assert!(
+                !q.meaning.to_lowercase().contains(&q.word.trim().to_lowercase()),
+                "meaning leaked answer '{}' in '{}'",
+                q.word,
+                q.meaning
+            );
+            for opt in &q.options {
+                assert!(!opt.contains(" vs "), "option leaked vs note: {}", opt);
+                assert!(!opt.contains(" / "), "option leaked slash note: {}", opt);
+                assert!(!opt.contains('('), "option leaked paren note: {}", opt);
+            }
+            if q.question_type == "meaning_mcq" {
+                assert!(q.cloze_sentence.is_none());
+            } else if q.question_type == "cloze_mcq" {
+                assert!(q.cloze_sentence.is_some());
+            }
+        };
+
         let mixed = generate_vocab_quiz(&conn, Some(10), Some("mixed".to_string())).unwrap();
         assert_eq!(mixed.len(), 10);
         let typing_n = mixed.iter().filter(|q| q.question_type == "typing").count();
         let mcq_n = mixed.len() - typing_n;
         assert_eq!(typing_n, 3);
         assert_eq!(mcq_n, 7);
+        for q in &mixed {
+            assert_clean_question(q);
+        }
 
         let mcq = generate_vocab_quiz(&conn, Some(10), Some("mcq".to_string())).unwrap();
         assert_eq!(mcq.len(), 10);
         for q in &mcq {
+            assert_clean_question(q);
             assert!(q.question_type == "meaning_mcq" || q.question_type == "cloze_mcq");
             assert_eq!(q.options.len(), 4);
             assert!(q.options.contains(&q.word));
@@ -2481,6 +2567,7 @@ mod tests {
         let typing = generate_vocab_quiz(&conn, Some(5), Some("typing".to_string())).unwrap();
         assert_eq!(typing.len(), 5);
         for q in &typing {
+            assert_clean_question(q);
             assert_eq!(q.question_type, "typing");
             assert!(q.options.is_empty());
             assert!(!q.hint.is_empty());
