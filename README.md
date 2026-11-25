@@ -71,6 +71,18 @@
 
 ---
 
+## ☕ Ủng hộ tác giả
+
+App hoàn toàn miễn phí và không quảng cáo. Nếu **XD4T IELTS 6.5** giúp bạn học đều tay hơn mỗi ngày, bạn có thể mời tác giả một ly cà phê qua mã VietQR bên dưới để tiếp thêm động lực duy trì và cập nhật thêm tính năng mới. Cảm ơn bạn rất nhiều!
+
+<p align="center">
+  <img src="docs/donate-qr.png" width="280" alt="Mã VietQR ủng hộ tác giả XD4T-1ELTS" />
+</p>
+
+<p align="center"><code>MB Bank · 9888888881808 · PHAM XUAN DAT</code></p>
+
+---
+
 <details>
 <summary><b>Dành cho lập trình viên: Tự build từ mã nguồn, kiến trúc & script hỗ trợ</b></summary>
 
