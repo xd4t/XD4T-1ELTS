@@ -31,7 +31,7 @@ namespace XD4TIeltsBar
 
     internal sealed class IeltsWidgetForm : Form
     {
-        private const int BaseWidth = 180;
+        private const int BaseWidth = 192;
         private const int BaseHeight = 38;
 
         private const int WS_EX_TOOLWINDOW = 0x00000080;
@@ -223,6 +223,19 @@ namespace XD4TIeltsBar
                 _lastAppliedMono = isMono;
                 int pref = isMono ? DWMWCP_DONOTROUND : DWMWCP_ROUNDSMALL;
                 DwmSetWindowAttribute(Handle, DWMWA_WINDOW_CORNER_PREFERENCE, ref pref, Marshal.SizeOf(typeof(int)));
+                Region oldRegion = Region;
+                if (isMono)
+                {
+                    Region = null;
+                }
+                else if (Width > 0 && Height > 0)
+                {
+                    using (GraphicsPath rp = CreateRoundedRect(new RectangleF(0f, 0f, Width, Height), Sf(4f)))
+                    {
+                        Region = new Region(rp);
+                    }
+                }
+                if (oldRegion != null) oldRegion.Dispose();
             }
             catch { }
         }
@@ -396,6 +409,7 @@ namespace XD4TIeltsBar
                 if (dict.ContainsKey("days_left")) d.DaysLeft = Convert.ToInt32(dict["days_left"], CultureInfo.InvariantCulture);
                 if (dict.ContainsKey("today_minutes")) d.TodayMinutes = Convert.ToInt32(dict["today_minutes"], CultureInfo.InvariantCulture);
                 _data = d;
+                ApplyRoundedCorners();
 
                 string tip = string.Format(
                     CultureInfo.InvariantCulture,
@@ -597,7 +611,6 @@ namespace XD4TIeltsBar
             bool isPastelMale = theme == "pastel-male";
             bool isPastelFemale = theme == "pastel-female";
             bool isMono = !isPastelMale && !isPastelFemale;
-            ApplyRoundedCorners();
 
             Color bg;
             Color border;
@@ -655,7 +668,7 @@ namespace XD4TIeltsBar
 
             g.Clear(bg);
 
-            float outerR = isMono ? 0f : Sf(6f);
+            float outerR = isMono ? 0f : Sf(4f);
             float badgeR = isMono ? 0f : Sf(4f);
             float barR = isMono ? 0f : Sf(1.5f);
 
@@ -697,7 +710,7 @@ namespace XD4TIeltsBar
             RectangleF textRect = new RectangleF(textX, badgeY - Sf(1f), Width - textX - padX, badgeH + Sf(2f));
             using (Font tf = new Font(_fontName, Sf(9.2f), System.Drawing.FontStyle.Bold, GraphicsUnit.Point))
             using (SolidBrush tbr = new SolidBrush(textColor))
-            using (StringFormat sf = new StringFormat { Alignment = StringAlignment.Far, LineAlignment = StringAlignment.Center })
+            using (StringFormat sf = new StringFormat(StringFormatFlags.NoWrap) { Alignment = StringAlignment.Far, LineAlignment = StringAlignment.Center })
             {
                 g.DrawString(statText, tf, tbr, textRect, sf);
             }

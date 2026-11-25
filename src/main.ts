@@ -23,13 +23,13 @@ const THEME_OPTIONS: { id: ThemeId; label: string; sub: string; swatches: string
     id: 'pastel-male',
     label: 'Pastel Nam · Sky & Mint',
     sub: 'Dịu mắt, hiện đại (mặc định)',
-    swatches: ['#3B82A0', '#52A68C', '#F2F7F6'],
+    swatches: ['#2F6E89', '#52A68C', '#F2F7F6'],
   },
   {
     id: 'pastel-female',
     label: 'Pastel Nữ · Sakura & Peach',
     sub: 'Ấm áp, tinh tế, bo góc mềm',
-    swatches: ['#D67A89', '#E59876', '#FDF6F5'],
+    swatches: ['#B54E61', '#E59876', '#FDF6F5'],
   },
   {
     id: 'mono-dark',
@@ -78,6 +78,9 @@ let lastEndpoint = '';
 let isGrading = false;
 let writingStatusMsg = '';
 let writingStatusErr = false;
+let errFormMsg = '';
+let errFormErr = false;
+let scrollToNewErr = false;
 let dueCards: VocabCard[] = [];
 let cardIdx = 0;
 let cardFlipped = false;
@@ -435,6 +438,7 @@ function renderApp() {
               <input class="text-input" id="errRight" placeholder="Sửa chuẩn..." style="flex:1;min-width:90px;" />
               <button class="btn btn-sm" id="addErrBtn">+ THÊM</button>
             </div>
+            <div id="errFormMsg" style="font-size:11.5px;margin-bottom:6px;${errFormMsg ? `color:${errFormErr ? 'var(--m-err)' : 'var(--m-ok)'};` : 'display:none;'}">${esc(errFormMsg)}</div>
             <div class="log-table-wrap">
               <table class="log-table">
                 <thead>
@@ -1015,12 +1019,49 @@ function bindEvents() {
 
   document.getElementById('addErrBtn')!.onclick = async () => {
     const category = (document.getElementById('errCat') as HTMLInputElement).value.trim() || 'Ngữ pháp';
-    const wrongText = (document.getElementById('errWrong') as HTMLInputElement).value.trim();
-    const rightText = (document.getElementById('errRight') as HTMLInputElement).value.trim();
-    if (!wrongText || !rightText) return;
+    const wrongInput = document.getElementById('errWrong') as HTMLInputElement;
+    const rightInput = document.getElementById('errRight') as HTMLInputElement;
+    const wrongText = wrongInput.value.trim();
+    const rightText = rightInput.value.trim();
+    const msgEl = document.getElementById('errFormMsg');
+    if (!wrongText) {
+      if (msgEl) {
+        msgEl.textContent = '✕ Vui lòng nhập nội dung lỗi (Viết sai...).';
+        msgEl.style.color = 'var(--m-err)';
+        msgEl.style.display = 'block';
+      }
+      wrongInput.focus();
+      return;
+    }
+    if (!rightText) {
+      if (msgEl) {
+        msgEl.textContent = '✕ Vui lòng nhập cách sửa chuẩn (Sửa chuẩn...).';
+        msgEl.style.color = 'var(--m-err)';
+        msgEl.style.display = 'block';
+      }
+      rightInput.focus();
+      return;
+    }
+    errFormMsg = '✓ Đã thêm vào Sổ lỗi';
+    errFormErr = false;
+    scrollToNewErr = true;
     dash = await invoke<DashboardState>('add_error_log', { category, wrongText, rightText });
     renderApp();
   };
+
+  if (scrollToNewErr) {
+    scrollToNewErr = false;
+    document.querySelector('.log-table-wrap')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  const settingsDonateDetails = document.getElementById('settingsDonateDetails') as HTMLDetailsElement | null;
+  if (settingsDonateDetails) {
+    settingsDonateDetails.addEventListener('toggle', () => {
+      if (settingsDonateDetails.open) {
+        settingsDonateDetails.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      }
+    });
+  }
 
   // Modals
   const settingsModal = document.getElementById('settingsModal')!;

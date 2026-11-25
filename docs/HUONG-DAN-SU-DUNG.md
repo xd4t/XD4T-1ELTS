@@ -2,7 +2,7 @@
 
 [← Quay lại trang giới thiệu chính](../README.md)
 
-Chào bạn! Nếu bạn mới bắt đầu tự học IELTS hoặc không rành công nghệ, hướng dẫn này sẽ chỉ bạn từng bước thật chậm, rõ ràng và đúng theo từng nút bấm trong app **XD4T IELTS 6.5 (v1.2.2)**.
+Chào bạn! Nếu bạn mới bắt đầu tự học IELTS hoặc không rành công nghệ, hướng dẫn này sẽ chỉ bạn từng bước thật chậm, rõ ràng và đúng theo từng nút bấm trong app **XD4T IELTS 6.5 (v1.3.0)**.
 
 ---
 
