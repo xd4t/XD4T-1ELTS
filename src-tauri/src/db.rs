@@ -10,8 +10,8 @@ use crate::models::{
 };
 use crate::roadmap_parser::{parse_roadmap_markdown, ParsedQuest};
 use crate::seed_data::{
-    default_writing_prompts_for_band, ROADMAP_SEEDS_65, ROADMAP_SEEDS_80, VOCAB_SEEDS,
-    VOCAB_SEEDS_80,
+    default_writing_prompts_for_band, ERROR_LOG_SEEDS_65, ERROR_LOG_SEEDS_80, ROADMAP_SEEDS_65,
+    ROADMAP_SEEDS_80, VOCAB_SEEDS, VOCAB_SEEDS_80,
 };
 use crate::srs::apply_sm2;
 
@@ -340,22 +340,10 @@ pub fn init_schema_and_seed(conn: &Connection, seed_path: Option<&Path>) -> Resu
         .query_row("SELECT COUNT(*) FROM error_logs", [], |r| r.get(0))
         .map_err(|e| e.to_string())?;
     if err_count == 0 {
-        let samples = [
-            ("Nhóm 1 · Chia động từ", "Everybody know", "Everybody knows", 3),
-            ("Nhóm 1 · Danh từ đếm được", "human have / Student need", "Humans/People have / Students need", 3),
-            ("Nhóm 1 · Mạo từ a/an", "an new adult / an talent artist", "a new adult / a talented artist", 2),
-            ("Nhóm 2 · Nhầm từ", "a good change to develop", "a good chance to develop", 2),
-            ("Nhóm 2 · Effect/Affect", "can effect our lives", "can affect our lives", 2),
-            ("Nhóm 2 · Từ loại", "harmfully effects / In additionally", "harmful effects / In addition", 2),
-            ("Nhóm 3 · Comma splice", "...university students, they are...", "...students, as they are... (hoặc tách câu)", 2),
-            ("Nhóm 3 · Câu cụt", "Firstly, positive point about students can learn...", "One advantage of letting students study what they love is that...", 2),
-            ("Reading · T/F/NG", "Bỏ qua từ tuyệt đối every/all/only/most", "Soi kỹ từ tuyệt đối & phân biệt ý kiến vs sự thật", 2),
-            ("Reading · Paraphrase", "Nhầm were delivering ↔ introduce", "Soi nghĩa đối lập thật (within a few months ↔ several years)", 2),
-        ];
-        for (cat, wrong, right, cnt) in samples {
+        for e in ERROR_LOG_SEEDS_65 {
             conn.execute(
                 "INSERT INTO error_logs (category, wrong_text, right_text, count, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![cat, wrong, right, cnt, today],
+                params![e.category, e.wrong_text, e.right_text, e.count, today],
             )
             .map_err(|e| e.to_string())?;
         }
@@ -788,14 +776,27 @@ pub fn get_heatmap(conn: &Connection, today: NaiveDate, days: i64) -> Result<Vec
 }
 
 pub fn get_due_vocab(conn: &Connection, today: &str) -> Result<Vec<VocabCard>, String> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, track, topic, word, meaning, example, ease, interval_days, reps, due_date
-             FROM vocab_cards
-             WHERE due_date <= ?1
-             ORDER BY due_date ASC, id ASC",
+    let target_band: f64 = conn
+        .query_row(
+            "SELECT COALESCE(target_band, 7.0) FROM settings WHERE id = 1",
+            [],
+            |r| r.get(0),
         )
-        .map_err(|e| e.to_string())?;
+        .unwrap_or(7.0);
+    let order_sql = if target_band >= 7.5 {
+        "SELECT id, track, topic, word, meaning, example, ease, interval_days, reps, due_date
+         FROM vocab_cards
+         WHERE due_date <= ?1
+         ORDER BY due_date ASC, id DESC
+         LIMIT 40"
+    } else {
+        "SELECT id, track, topic, word, meaning, example, ease, interval_days, reps, due_date
+         FROM vocab_cards
+         WHERE due_date <= ?1
+         ORDER BY due_date ASC, id ASC
+         LIMIT 40"
+    };
+    let mut stmt = conn.prepare(order_sql).map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map(params![today], |r| {
             Ok(VocabCard {
@@ -1265,14 +1266,74 @@ pub fn set_study_level(conn: &Connection, level: &str) -> Result<DashboardState,
         .map_err(|e| e.to_string())?;
     }
 
-    // Add 40 C1-C2 vocab cards if switching to 8.0 (never duplicate or overwrite SRS)
+    // Swap unreviewed seed vocab cards (reps = 0) between 6.5 and 8.0 while preserving all studied/custom cards
     if is_80 {
+        for v in VOCAB_SEEDS {
+            conn.execute(
+                "DELETE FROM vocab_cards WHERE word = ?1 AND reps = 0",
+                params![v.word],
+            )
+            .map_err(|e| e.to_string())?;
+        }
         for v in VOCAB_SEEDS_80 {
             conn.execute(
                 "INSERT INTO vocab_cards (track, topic, word, meaning, example, ease, interval_days, reps, due_date)
                  SELECT 'ielts', ?1, ?2, ?3, ?4, 2.5, 0, 0, ?5
                  WHERE NOT EXISTS (SELECT 1 FROM vocab_cards WHERE word = ?2)",
                 params![v.topic, v.word, v.meaning, v.example, today],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    } else {
+        for v in VOCAB_SEEDS_80 {
+            conn.execute(
+                "DELETE FROM vocab_cards WHERE word = ?1 AND reps = 0",
+                params![v.word],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        for v in VOCAB_SEEDS {
+            conn.execute(
+                "INSERT INTO vocab_cards (track, topic, word, meaning, example, ease, interval_days, reps, due_date)
+                 SELECT 'ielts', ?1, ?2, ?3, ?4, 2.5, 0, 0, ?5
+                 WHERE NOT EXISTS (SELECT 1 FROM vocab_cards WHERE word = ?2)",
+                params![v.topic, v.word, v.meaning, v.example, today],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+
+    // Swap error_logs only if all existing rows belong to default seed sets (preserve 100% if user added any)
+    let mut has_user_errors = false;
+    {
+        let mut stmt = conn
+            .prepare("SELECT wrong_text, right_text FROM error_logs")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| e.to_string())?;
+        for row in rows.flatten() {
+            let in_65 = ERROR_LOG_SEEDS_65
+                .iter()
+                .any(|e| e.wrong_text == row.0 && e.right_text == row.1);
+            let in_80 = ERROR_LOG_SEEDS_80
+                .iter()
+                .any(|e| e.wrong_text == row.0 && e.right_text == row.1);
+            if !in_65 && !in_80 {
+                has_user_errors = true;
+                break;
+            }
+        }
+    }
+    if !has_user_errors {
+        conn.execute("DELETE FROM error_logs", [])
+            .map_err(|e| e.to_string())?;
+        let err_seeds = if is_80 { ERROR_LOG_SEEDS_80 } else { ERROR_LOG_SEEDS_65 };
+        for e in err_seeds {
+            conn.execute(
+                "INSERT INTO error_logs (category, wrong_text, right_text, count, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![e.category, e.wrong_text, e.right_text, e.count, today],
             )
             .map_err(|e| e.to_string())?;
         }
@@ -1894,31 +1955,46 @@ mod tests {
         let d0 = get_dashboard_state(&conn).unwrap();
         assert_eq!(d0.settings.target_band, 7.0);
         assert_eq!(d0.total_vocab_count, 40);
+        assert_eq!(d0.error_logs.len(), 10);
         // Mark Tuần 1 done before switching
         toggle_roadmap_item(&conn, d0.roadmap[0].id).unwrap();
 
         let d80 = set_study_level(&conn, "8.0").unwrap();
         assert_eq!(d80.settings.target_band, 8.0);
-        assert_eq!(d80.total_vocab_count, 80);
+        assert_eq!(d80.total_vocab_count, 40);
         assert_eq!(d80.roadmap.len(), 24);
         assert!(d80.roadmap[0].done); // Preserved!
+        assert!(!d80.roadmap[0].title.starts_with('['));
         assert_eq!(d80.skill_bands[0].target, 8.5);
         assert_eq!(d80.skill_bands[1].target, 8.5);
         assert_eq!(d80.skill_bands[2].target, 7.5);
         assert_eq!(d80.skill_bands[3].target, 7.5);
         assert_eq!(d80.skill_bands[0].current, 7.0); // Fresh DB baseline for 8.0
+        assert_eq!(d80.error_logs.len(), 10);
+        assert!(ERROR_LOG_SEEDS_80.iter().any(|e| e.wrong_text == d80.error_logs[0].wrong_text));
+
+        let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
+        let due_80 = get_due_vocab(&conn, &today).unwrap();
+        assert!(!due_80.is_empty());
+        assert!(VOCAB_SEEDS_80.iter().any(|v| v.word == due_80[0].word));
+
+        // Review first C1-C2 card so reps > 0, and add a custom error log
+        review_vocab_card(&conn, due_80[0].id, 3, Local::now().date_naive()).unwrap();
+        upsert_error_log(&conn, "Custom", "my wrong", "my right").unwrap();
 
         // Switching to 8.0 again does not duplicate vocab cards
         let d80_again = set_study_level(&conn, "8.0").unwrap();
-        assert_eq!(d80_again.total_vocab_count, 80);
+        assert_eq!(d80_again.total_vocab_count, 40);
 
-        // User enters a real practice score, then switches back to 6.5 -> score is preserved!
+        // User enters a real practice score, then switches back to 6.5 -> score, studied card, and custom error preserved!
         add_practice_score(&conn, "Reading", "Cam 16 T1", 8.0, "35/40").unwrap();
         let d65 = set_study_level(&conn, "6.5").unwrap();
         assert_eq!(d65.settings.target_band, 7.0);
         assert_eq!(d65.skill_bands[1].target, 7.0);
         assert_eq!(d65.skill_bands[1].current, 8.0); // User score preserved!
         assert!(d65.roadmap[0].done);
+        assert_eq!(d65.total_vocab_count, 41); // 40 Band 6.5 + 1 studied Band 8.0 card
+        assert!(d65.error_logs.iter().any(|e| e.wrong_text == "my wrong"));
     }
 
     #[test]

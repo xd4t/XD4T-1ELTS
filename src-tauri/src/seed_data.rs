@@ -208,7 +208,7 @@ pub const VOCAB_SEEDS_80: &[SeedVocab] = &[
 
     // Society & Inequality (6)
     SeedVocab { topic: "Society (C1–C2)", word: "exacerbate socioeconomic disparities", meaning: "làm trầm trọng thêm bất bình đẳng kinh tế–xã hội", example: "Unequal broadband access can exacerbate socioeconomic disparities across regions." },
-    SeedVocab { topic: "Society (C1–C2)", word: "foster social cohesion (C1)", meaning: "thúc đẩy sự gắn kết cộng đồng", example: "Shared civic spaces foster social cohesion in rapidly urbanizing cities." },
+    SeedVocab { topic: "Society (C1–C2)", word: "bolster social cohesion", meaning: "thúc đẩy sự gắn kết cộng đồng", example: "Shared civic spaces bolster social cohesion in rapidly urbanizing cities." },
     SeedVocab { topic: "Society (C1–C2)", word: "allocate public funds judiciously", meaning: "phân bổ ngân sách công một cách sáng suốt", example: "Municipalities must allocate public funds judiciously to essential infrastructure." },
     SeedVocab { topic: "Society (C1–C2)", word: "erode interpersonal trust", meaning: "làm xói mòn niềm tin giữa người với người", example: "Algorithmic echo chambers can gradually erode interpersonal trust." },
     SeedVocab { topic: "Society (C1–C2)", word: "bridge the generational divide", meaning: "thu hẹp khoảng cách thế hệ", example: "Intergenerational volunteering programs help bridge the generational divide." },
@@ -223,7 +223,7 @@ pub const VOCAB_SEEDS_80: &[SeedVocab] = &[
     SeedVocab { topic: "Technology (C1–C2)", word: "blur the boundaries between", meaning: "làm mờ ranh giới giữa...", example: "Always-on messaging tools often blur the boundaries between work and leisure." },
 
     // Environment & Urbanization (6)
-    SeedVocab { topic: "Environment (C1–C2)", word: "curb carbon emissions (C1)", meaning: "kiềm chế lượng khí thải carbon", example: "Electrifying public fleets is vital to curb carbon emissions in megacities." },
+    SeedVocab { topic: "Environment (C1–C2)", word: "decarbonize heavy industry", meaning: "giảm phát thải carbon trong công nghiệp nặng", example: "Electrifying public fleets and decarbonizing heavy industry are vital in megacities." },
     SeedVocab { topic: "Environment (C1–C2)", word: "stem the tide of", meaning: "ngăn chặn đà gia tăng của...", example: "Circular packaging laws can help stem the tide of marine plastic pollution." },
     SeedVocab { topic: "Environment (C1–C2)", word: "accelerate the transition toward", meaning: "đẩy nhanh quá trình chuyển dịch sang...", example: "Targeted tax incentives accelerate the transition toward renewable energy." },
     SeedVocab { topic: "Environment (C1–C2)", word: "deplete finite natural resources", meaning: "làm cạn kiệt tài nguyên thiên nhiên hữu hạn", example: "Unrestrained industrial expansion continues to deplete finite natural resources." },
@@ -254,36 +254,36 @@ pub const VOCAB_SEEDS_80: &[SeedVocab] = &[
 // Lộ trình 24 tuần Aim 6.5 (Vùng đệm 7.0) — Gắn KPI định lượng từng tuần + 3 Cổng Checkpoint
 pub const ROADMAP_SEEDS_65: &[SeedRoadmap] = &[
     // Giai đoạn 1: Tuần 1-7 (25/11/2026 -> 12/01/2027) — Diệt lỗi nền & 5 khung T2 + 3 biểu đồ T1
-    SeedRoadmap { phase: 1, week_label: "Tuần 1", title: "[W: Lỗi nhóm 1 (số ít/nhiều, chia ĐT, mạo từ) + Task 2 Opinion | R/L: Official Guide T/F/NG + Dictation | S: A.R.E.A | Đích tuần: Lỗi nhóm 1 ≤ 3 lỗi/bài]" },
-    SeedRoadmap { phase: 1, week_label: "Tuần 2", title: "[W: Lỗi nhóm 1 + Task 2 Discussion & Opinion (viết lại bài test cũ) | R/L: Matching Headings + DailyDictation | S: Part 1 lưu loát | Đích tuần: W ≥ 5.0]" },
-    SeedRoadmap { phase: 1, week_label: "Tuần 3", title: "[W: Lỗi nhóm 2 (change/chance, effect/affect, word family) + Task 2 Adv–Disadv | R/L: Summary Completion + 5 cặp Paraphrase | S: Sửa âm cuối s/ed | Đích tuần: R/L ≥ 20/40]" },
-    SeedRoadmap { phase: 1, week_label: "Tuần 4", title: "[W: Lỗi nhóm 2 + Task 2 Problem/Cause–Solution | R/L: Linearthinking Passage 1–2 | S: Part 1 + lý do A.R.E.A | Đích tuần: Đủ 4/5 khung Task 2]" },
-    SeedRoadmap { phase: 1, week_label: "Tuần 5", title: "[W: Lỗi nhóm 3 (câu cụt, comma splice) + Task 2 Two-part question | R/L: Multiple Choice + Distractors | S: Mở rộng ví dụ | Đích tuần: 0 câu cụt/comma splice]" },
-    SeedRoadmap { phase: 1, week_label: "Tuần 6", title: "[W: Task 1 Line Graph (Overview + xu hướng) + viết lại T2 yếu nhất | R/L: Cam 12 Passage bấm giờ 20p | S: Ghi âm 2p | Đích tuần: Overview 0 chèn số liệu]" },
+    SeedRoadmap { phase: 1, week_label: "Tuần 1", title: "W: Lỗi nhóm 1 (số ít/nhiều, chia ĐT, mạo từ) + Task 2 Opinion | R/L: Official Guide T/F/NG + Dictation | S: A.R.E.A | Đích tuần: Lỗi nhóm 1 ≤ 3 lỗi/bài" },
+    SeedRoadmap { phase: 1, week_label: "Tuần 2", title: "W: Lỗi nhóm 1 + Task 2 Discussion & Opinion (viết lại bài test cũ) | R/L: Matching Headings + DailyDictation | S: Part 1 lưu loát | Đích tuần: W ≥ 5.0" },
+    SeedRoadmap { phase: 1, week_label: "Tuần 3", title: "W: Lỗi nhóm 2 (change/chance, effect/affect, word family) + Task 2 Adv–Disadv | R/L: Summary Completion + 5 cặp Paraphrase | S: Sửa âm cuối s/ed | Đích tuần: R/L ≥ 20/40" },
+    SeedRoadmap { phase: 1, week_label: "Tuần 4", title: "W: Lỗi nhóm 2 + Task 2 Problem/Cause–Solution | R/L: Linearthinking Passage 1–2 | S: Part 1 + lý do A.R.E.A | Đích tuần: Đủ 4/5 khung Task 2" },
+    SeedRoadmap { phase: 1, week_label: "Tuần 5", title: "W: Lỗi nhóm 3 (câu cụt, comma splice) + Task 2 Two-part question | R/L: Multiple Choice + Distractors | S: Mở rộng ví dụ | Đích tuần: 0 câu cụt/comma splice" },
+    SeedRoadmap { phase: 1, week_label: "Tuần 6", title: "W: Task 1 Line Graph (Overview + xu hướng) + viết lại T2 yếu nhất | R/L: Cam 12 Passage bấm giờ 20p | S: Ghi âm 2p | Đích tuần: Overview 0 chèn số liệu" },
     SeedRoadmap { phase: 1, week_label: "Tuần 7", title: "✅ CHECKPOINT MỐC 1 (Cam 12 Test 1 + T2 Discussion): Đích L ≥ 23/40 (6.0), R ≥ 23/40 (6.0), W ≥ 5.5 (lỗi nhóm 1 ≤ 2/đoạn), S ≥ 5.5" },
 
     // Giai đoạn 2: Tuần 8-15 (13/01/2027 -> 09/03/2027) — Tăng tốc & 6 cấu trúc nâng cao
-    SeedRoadmap { phase: 2, week_label: "Tuần 8", title: "[W: Mệnh đề quan hệ & rút gọn (Students studying...) | R/L: Cam 13 T1–2 + Linearthinking P2 | S: Bắt đầu Part 2 (2p) | Đích tuần: Dùng ≥ 2 MĐQH/bài]" },
-    SeedRoadmap { phase: 2, week_label: "Tuần 9", title: "[W: Thực hành MĐQH viết lại bài cũ đạt ≥ 6.0 | R/L: Cam 13 T3–4 + bảng Paraphrase | S: Part 2 trôi chảy 2p | Đích tuần: R ≥ 25/40]" },
-    SeedRoadmap { phase: 2, week_label: "Tuần 10", title: "[W: Câu điều kiện loại 1 & 2 (If governments invested...) | R/L: Cam 14 T1–2 + L Section 3 | S: Part 3 theo A.R.E.A | Đích tuần: L ≥ 26/40]" },
-    SeedRoadmap { phase: 2, week_label: "Tuần 11", title: "[W: Câu bị động học thuật (More funding should be allocated...) | R/L: Cam 14 T3–4 + Distractor traps | S: Nối ý mượt | Đích tuần: W ≥ 5.5–6.0]" },
-    SeedRoadmap { phase: 2, week_label: "Tuần 12", title: "[W: Danh từ hóa (Nominalization: The surge in...) | R/L: Cam 15 T1–2 + Dictation Section 4 | S: Part 2 + Part 3 | Đích tuần: R/L ≥ 27/40]" },
-    SeedRoadmap { phase: 2, week_label: "Tuần 13", title: "[W: Nhượng bộ & tương phản (Although/While/Despite) | R/L: Cam 15 T3 + T/F/NG tốc độ | S: Sửa lỗi thì & chia ĐT | Đích tuần: W ≥ 6.0]" },
-    SeedRoadmap { phase: 2, week_label: "Tuần 14", title: "[W: Nhấn mạnh (Not only... but also...) + Task 1 Process/Map | R/L: Luyện sâu Section 3–4 | S: 6 câu chuyện Part 2 | Đích tuần: Đủ mọi dạng Task 1]" },
+    SeedRoadmap { phase: 2, week_label: "Tuần 8", title: "W: Mệnh đề quan hệ & rút gọn (Students studying...) | R/L: Cam 13 T1–2 + Linearthinking P2 | S: Bắt đầu Part 2 (2p) | Đích tuần: Dùng ≥ 2 MĐQH/bài" },
+    SeedRoadmap { phase: 2, week_label: "Tuần 9", title: "W: Thực hành MĐQH viết lại bài cũ đạt ≥ 6.0 | R/L: Cam 13 T3–4 + bảng Paraphrase | S: Part 2 trôi chảy 2p | Đích tuần: R ≥ 25/40" },
+    SeedRoadmap { phase: 2, week_label: "Tuần 10", title: "W: Câu điều kiện loại 1 & 2 (If governments invested...) | R/L: Cam 14 T1–2 + L Section 3 | S: Part 3 theo A.R.E.A | Đích tuần: L ≥ 26/40" },
+    SeedRoadmap { phase: 2, week_label: "Tuần 11", title: "W: Câu bị động học thuật (More funding should be allocated...) | R/L: Cam 14 T3–4 + Distractor traps | S: Nối ý mượt | Đích tuần: W ≥ 5.5–6.0" },
+    SeedRoadmap { phase: 2, week_label: "Tuần 12", title: "W: Danh từ hóa (Nominalization: The surge in...) | R/L: Cam 15 T1–2 + Dictation Section 4 | S: Part 2 + Part 3 | Đích tuần: R/L ≥ 27/40" },
+    SeedRoadmap { phase: 2, week_label: "Tuần 13", title: "W: Nhượng bộ & tương phản (Although/While/Despite) | R/L: Cam 15 T3 + T/F/NG tốc độ | S: Sửa lỗi thì & chia ĐT | Đích tuần: W ≥ 6.0" },
+    SeedRoadmap { phase: 2, week_label: "Tuần 14", title: "W: Nhấn mạnh (Not only... but also...) + Task 1 Process/Map | R/L: Luyện sâu Section 3–4 | S: 6 câu chuyện Part 2 | Đích tuần: Đủ mọi dạng Task 1" },
     SeedRoadmap { phase: 2, week_label: "Tuần 15", title: "✅ CHECKPOINT MỐC 2 (Cam 15 Test 4 Full 4 kỹ năng): Đích L ≥ 28/40 (6.5–7.0), R ≥ 27/40 (6.5), W ≥ 5.5–6.0, S ≥ 6.0 (Hụt W<5.5: dồn T6 sang Writing)" },
 
     // Giai đoạn 3: Tuần 16-21 (10/03/2027 -> 20/04/2027) — Xây vùng đệm 7.0 & Forecast thực chiến
-    SeedRoadmap { phase: 3, week_label: "Tuần 16", title: "[W: Key to IELTS Writing + Full Test 60p | R/L: Cam 16 Full bấm giờ Study4 | S: Forecast Q1–2/2027 (4 chủ đề) | Đích tuần: R/L 30–32/40]" },
-    SeedRoadmap { phase: 3, week_label: "Tuần 17", title: "[W: Full Test 60p + 4 chủ đề tủ (Education, Tech, Work, Env) | R/L: Cam 16–17 Full | S: Gom 4 câu chuyện Part 2 | Đích tuần: W ≥ 6.0]" },
-    SeedRoadmap { phase: 3, week_label: "Tuần 18", title: "[W: Mandatory Rewrite đoạn yếu lên ≥ 6.5 | R/L: Cam 17 Full bấm giờ máy | S: Gom đủ 8 câu chuyện Forecast | Đích tuần: R/L 31–33/40]" },
-    SeedRoadmap { phase: 3, week_label: "Tuần 19", title: "[W: Full Test 60p + 4 chủ đề tủ (Health, Urban, Gov, Media) | R/L: Cam 18 T1–2 Full | S: Part 3 phản xạ 30s | Đích tuần: W 6.0–6.5]" },
-    SeedRoadmap { phase: 3, week_label: "Tuần 20", title: "[W: 4 chủ đề tủ (Crime, Family, Culture, Transport) + Checklist 3p | R/L: Cam 18 T3–4 Full | S: Đủ 12 câu chuyện khung | Đích tuần: L 32–34/40, R 30–32/40]" },
+    SeedRoadmap { phase: 3, week_label: "Tuần 16", title: "W: Key to IELTS Writing + Full Test 60p | R/L: Cam 16 Full bấm giờ Study4 | S: Forecast Q1–2/2027 (4 chủ đề) | Đích tuần: R/L 30–32/40" },
+    SeedRoadmap { phase: 3, week_label: "Tuần 17", title: "W: Full Test 60p + 4 chủ đề tủ (Education, Tech, Work, Env) | R/L: Cam 16–17 Full | S: Gom 4 câu chuyện Part 2 | Đích tuần: W ≥ 6.0" },
+    SeedRoadmap { phase: 3, week_label: "Tuần 18", title: "W: Mandatory Rewrite đoạn yếu lên ≥ 6.5 | R/L: Cam 17 Full bấm giờ máy | S: Gom đủ 8 câu chuyện Forecast | Đích tuần: R/L 31–33/40" },
+    SeedRoadmap { phase: 3, week_label: "Tuần 19", title: "W: Full Test 60p + 4 chủ đề tủ (Health, Urban, Gov, Media) | R/L: Cam 18 T1–2 Full | S: Part 3 phản xạ 30s | Đích tuần: W 6.0–6.5" },
+    SeedRoadmap { phase: 3, week_label: "Tuần 20", title: "W: 4 chủ đề tủ (Crime, Family, Culture, Transport) + Checklist 3p | R/L: Cam 18 T3–4 Full | S: Đủ 12 câu chuyện khung | Đích tuần: L 32–34/40, R 30–32/40" },
     SeedRoadmap { phase: 3, week_label: "Tuần 21", title: "✅ CHECKPOINT MỐC 3 (Cam 18): 2 Full Test liên tiếp ≥ 6.5–7.0 (L≥7.0, R≥6.5, S≥6.0, W≥5.5) -> Chốt lịch đăng ký thi 05/2027!" },
 
     // Giai đoạn 4: Tuần 22-24 (21/04/2027 -> giữa 05/2027) — Nước rút phòng thi
-    SeedRoadmap { phase: 4, week_label: "Tuần 22", title: "[W/R/L: Cam 19 Full Mock Test (L→R→W 1 mạch đúng giờ thi) x2 lần | S: Mock 15p với AI/bạn | Đích tuần: Không hụt giờ bất kỳ bài nào]" },
-    SeedRoadmap { phase: 4, week_label: "Tuần 23", title: "[W: Ôn Sổ lỗi + Checklist 3p + 5 khung T2 | R/L: Actual Tests mới nhất | S: 12 câu chuyện Forecast | Đích tuần: Ổn định vùng đệm 6.75–7.0]" },
-    SeedRoadmap { phase: 4, week_label: "Tuần 24", title: "[Nước rút: Không nạp kiến thức mới; 3 ngày cuối ngủ đủ giấc, nghe nhẹ 15p + lướt Collocations giữ phản xạ phòng thi]" },
+    SeedRoadmap { phase: 4, week_label: "Tuần 22", title: "W/R/L: Cam 19 Full Mock Test (L→R→W 1 mạch đúng giờ thi) x2 lần | S: Mock 15p với AI/bạn | Đích tuần: Không hụt giờ bất kỳ bài nào" },
+    SeedRoadmap { phase: 4, week_label: "Tuần 23", title: "W: Ôn Sổ lỗi + Checklist 3p + 5 khung T2 | R/L: Actual Tests mới nhất | S: 12 câu chuyện Forecast | Đích tuần: Ổn định vùng đệm 6.75–7.0" },
+    SeedRoadmap { phase: 4, week_label: "Tuần 24", title: "Nước rút: Không nạp kiến thức mới; 3 ngày cuối ngủ đủ giấc, nghe nhẹ 15p + lướt Collocations giữ phản xạ phòng thi" },
 ];
 
 #[allow(dead_code)]
@@ -292,34 +292,67 @@ pub const ROADMAP_SEEDS: &[SeedRoadmap] = ROADMAP_SEEDS_65;
 // Lộ trình 24 tuần Aim 8.0 (Dành cho nền đã vững 6.5+) — Kèm KPI định lượng từng tuần + 3 Checkpoints
 pub const ROADMAP_SEEDS_80: &[SeedRoadmap] = &[
     // Giai đoạn 1 · Tuần 1–6: Phá trần 6.5 lên 7.0+ (Precision, Nuance & Distractor Mastery)
-    SeedRoadmap { phase: 1, week_label: "Tuần 1", title: "[W: Diệt Over-generalization & tập Hedging (tend to/arguably) | R: T/F/NG suy luận P3 | Đích tuần: R ≥ 11/13]" },
-    SeedRoadmap { phase: 1, week_label: "Tuần 2", title: "[W: Thay linker cơ học bằng Semantic Referencing | L: Part 3 Multiple Choice dài | Đích tuần: L Part 3 ≥ 8/10]" },
-    SeedRoadmap { phase: 1, week_label: "Tuần 3", title: "[W: Task 2 Opinion & Discussion có Counter-argument + Rebuttal | R: Matching Headings | Đích tuần: W ≥ 7.0]" },
-    SeedRoadmap { phase: 1, week_label: "Tuần 4", title: "[W: Task 1 Grouping by Pattern & Key Comparisons | L: Part 4 Note Completion C1 | Đích tuần: L Part 4 ≥ 9/10]" },
-    SeedRoadmap { phase: 1, week_label: "Tuần 5", title: "[W: Task 2 Problem–Solution & Two-part (nguyên nhân gốc & hệ quả tầng 2) | S: Part 3 Speculating]" },
+    SeedRoadmap { phase: 1, week_label: "Tuần 1", title: "W: Diệt Over-generalization & tập Hedging (tend to/arguably) | R: T/F/NG suy luận P3 | Đích tuần: R ≥ 11/13" },
+    SeedRoadmap { phase: 1, week_label: "Tuần 2", title: "W: Thay linker cơ học bằng Semantic Referencing | L: Part 3 Multiple Choice dài | Đích tuần: L Part 3 ≥ 8/10" },
+    SeedRoadmap { phase: 1, week_label: "Tuần 3", title: "W: Task 2 Opinion & Discussion có Counter-argument + Rebuttal | R: Matching Headings | Đích tuần: W ≥ 7.0" },
+    SeedRoadmap { phase: 1, week_label: "Tuần 4", title: "W: Task 1 Grouping by Pattern & Key Comparisons | L: Part 4 Note Completion C1 | Đích tuần: L Part 4 ≥ 9/10" },
+    SeedRoadmap { phase: 1, week_label: "Tuần 5", title: "W: Task 2 Problem–Solution & Two-part (nguyên nhân gốc & hệ quả tầng 2) | S: Part 3 Speculating" },
     SeedRoadmap { phase: 1, week_label: "Tuần 6", title: "✅ CHECKPOINT MỐC 1 (Cam 15 Full): Đích L ≥ 33/40 (7.5), R ≥ 33/40 (7.5), W ≥ 7.0, S ≥ 7.0" },
 
     // Giai đoạn 2 · Tuần 7–14: Nâng tầm C1–C2 & Tư duy phản biện Band 7.5–8.0
-    SeedRoadmap { phase: 2, week_label: "Tuần 7", title: "[W: Nominalization & Non-defining Relative Clauses | R: Cam 16 T1–2 bấm giờ 54p | Đích tuần: R ≥ 34/40]" },
-    SeedRoadmap { phase: 2, week_label: "Tuần 8", title: "[W: Participle Clauses & Inversion tiết chế | L: Cam 16 T1–2 tốc độ 1.1x | Đích tuần: L ≥ 34/40]" },
-    SeedRoadmap { phase: 2, week_label: "Tuần 9", title: "[W: Chủ đề AI Ethics & Automation (C1 collocations + T2 38p) | S: Part 2 Storytelling có chiều sâu]" },
-    SeedRoadmap { phase: 2, week_label: "Tuần 10", title: "[W: Economic Inequality & Public Spending + T1 Mixed Charts | R: Cam 16 T3–4 (Multiple Choice P3)]" },
-    SeedRoadmap { phase: 2, week_label: "Tuần 11", title: "[W: Climate Policy & Urban Planning + T1 Process/Map | L: Cam 16 T3–4 (Attitude & Agreement traps)]" },
-    SeedRoadmap { phase: 2, week_label: "Tuần 12", title: "[W: Higher Education & Work Future (sạch 100% mạo từ/giới từ) | S: Part 3 Hedging & Idiomatic]" },
-    SeedRoadmap { phase: 2, week_label: "Tuần 13", title: "[W: Media Censorship, Crime & Culture | R+L: Cam 17 T1–3 bấm giờ khắt khe | Đích tuần: 35+/40]" },
+    SeedRoadmap { phase: 2, week_label: "Tuần 7", title: "W: Nominalization & Non-defining Relative Clauses | R: Cam 16 T1–2 bấm giờ 54p | Đích tuần: R ≥ 34/40" },
+    SeedRoadmap { phase: 2, week_label: "Tuần 8", title: "W: Participle Clauses & Inversion tiết chế | L: Cam 16 T1–2 tốc độ 1.1x | Đích tuần: L ≥ 34/40" },
+    SeedRoadmap { phase: 2, week_label: "Tuần 9", title: "W: Chủ đề AI Ethics & Automation (C1 collocations + T2 38p) | S: Part 2 Storytelling có chiều sâu" },
+    SeedRoadmap { phase: 2, week_label: "Tuần 10", title: "W: Economic Inequality & Public Spending + T1 Mixed Charts | R: Cam 16 T3–4 (Multiple Choice P3)" },
+    SeedRoadmap { phase: 2, week_label: "Tuần 11", title: "W: Climate Policy & Urban Planning + T1 Process/Map | L: Cam 16 T3–4 (Attitude & Agreement traps)" },
+    SeedRoadmap { phase: 2, week_label: "Tuần 12", title: "W: Higher Education & Work Future (sạch 100% mạo từ/giới từ) | S: Part 3 Hedging & Idiomatic" },
+    SeedRoadmap { phase: 2, week_label: "Tuần 13", title: "W: Media Censorship, Crime & Culture | R+L: Cam 17 T1–3 bấm giờ khắt khe | Đích tuần: 35+/40" },
     SeedRoadmap { phase: 2, week_label: "Tuần 14", title: "✅ CHECKPOINT MỐC 2 (Cam 17 T4 Full 4 kỹ năng): Đích L ≥ 35/40 (8.0), R ≥ 35/40 (8.0), W ≥ 7.0–7.5, S ≥ 7.0–7.5" },
 
     // Giai đoạn 3 · Tuần 15–20: Chốt chuẩn Band 8.0 & Mastery 12 chủ đề trừu tượng
-    SeedRoadmap { phase: 3, week_label: "Tuần 15", title: "[Cam 18 T1–2 (R 52p, L 1.1x) + 2 bài Full Writing 60p + Mandatory Rewrite đoạn < 7.5]" },
-    SeedRoadmap { phase: 3, week_label: "Tuần 16", title: "[Cam 18 T3–4 + Chủ đề Bioethics, Space Funding & Globalization + Sổ bẫy Paraphrase C1–C2]" },
-    SeedRoadmap { phase: 3, week_label: "Tuần 17", title: "[Speaking Forecast Part 2–3 nâng cao (gom 12 trục câu chuyện C1) + 2 bài Full Writing 60p]" },
-    SeedRoadmap { phase: 3, week_label: "Tuần 18", title: "[Cam 19 T1–2 bấm giờ phòng thi + Rà soát độ chính xác GRA (≥ 80% câu hoàn toàn không lỗi)]" },
-    SeedRoadmap { phase: 3, week_label: "Tuần 19", title: "[Cam 19 T3–4 + 2 bài Full Writing 60p (T1 18p + T2 38p + 4p soát lỗi tinh vi)]" },
+    SeedRoadmap { phase: 3, week_label: "Tuần 15", title: "Cam 18 T1–2 (R 52p, L 1.1x) + 2 bài Full Writing 60p + Mandatory Rewrite đoạn < 7.5" },
+    SeedRoadmap { phase: 3, week_label: "Tuần 16", title: "Cam 18 T3–4 + Chủ đề Bioethics, Space Funding & Globalization + Sổ bẫy Paraphrase C1–C2" },
+    SeedRoadmap { phase: 3, week_label: "Tuần 17", title: "Speaking Forecast Part 2–3 nâng cao (gom 12 trục câu chuyện C1) + 2 bài Full Writing 60p" },
+    SeedRoadmap { phase: 3, week_label: "Tuần 18", title: "Cam 19 T1–2 bấm giờ phòng thi + Rà soát độ chính xác GRA (≥ 80% câu hoàn toàn không lỗi)" },
+    SeedRoadmap { phase: 3, week_label: "Tuần 19", title: "Cam 19 T3–4 + 2 bài Full Writing 60p (T1 18p + T2 38p + 4p soát lỗi tinh vi)" },
     SeedRoadmap { phase: 3, week_label: "Tuần 20", title: "✅ CHECKPOINT MỐC 3: 2 Full Test liên tiếp ≥ 7.5–8.0 (L ≥ 8.0, R ≥ 8.0, W ≥ 7.0–7.5, S ≥ 7.0–7.5)" },
 
     // Giai đoạn 4 · Tuần 21–24: Nước rút Peak Performance phòng thi
-    SeedRoadmap { phase: 4, week_label: "Tuần 21", title: "[Full Mock Test 3 kỹ năng liền mạch (L→R→W 2h40p không nghỉ) x2 lần + Chữa sâu từng câu sai]" },
-    SeedRoadmap { phase: 4, week_label: "Tuần 22", title: "[Actual Tests mới nhất + Tối ưu tốc độ đọc lướt & kiểm soát nhịp viết không hụt giờ]" },
-    SeedRoadmap { phase: 4, week_label: "Tuần 23", title: "[Ôn tổng Sổ lỗi cá nhân, 40+ Collocations C1–C2 tủ & 12 trục Speaking Forecast Part 2–3]" },
-    SeedRoadmap { phase: 4, week_label: "Tuần 24", title: "[Giữ phản xạ nhẹ 30p/ngày, cân chỉnh đồng hồ sinh học đúng giờ thi, tâm lý vững vàng]" },
+    SeedRoadmap { phase: 4, week_label: "Tuần 21", title: "Full Mock Test 3 kỹ năng liền mạch (L→R→W 2h40p không nghỉ) x2 lần + Chữa sâu từng câu sai" },
+    SeedRoadmap { phase: 4, week_label: "Tuần 22", title: "Actual Tests mới nhất + Tối ưu tốc độ đọc lướt & kiểm soát nhịp viết không hụt giờ" },
+    SeedRoadmap { phase: 4, week_label: "Tuần 23", title: "Ôn tổng Sổ lỗi cá nhân, 40+ Collocations C1–C2 tủ & 12 trục Speaking Forecast Part 2–3" },
+    SeedRoadmap { phase: 4, week_label: "Tuần 24", title: "Giữ phản xạ nhẹ 30p/ngày, cân chỉnh đồng hồ sinh học đúng giờ thi, tâm lý vững vàng" },
+];
+
+pub struct SeedErrorLog {
+    pub category: &'static str,
+    pub wrong_text: &'static str,
+    pub right_text: &'static str,
+    pub count: i64,
+}
+
+pub const ERROR_LOG_SEEDS_65: &[SeedErrorLog] = &[
+    SeedErrorLog { category: "Nhóm 1 · Chia động từ", wrong_text: "Everybody know", right_text: "Everybody knows", count: 3 },
+    SeedErrorLog { category: "Nhóm 1 · Danh từ đếm được", wrong_text: "human have / Student need", right_text: "Humans/People have / Students need", count: 3 },
+    SeedErrorLog { category: "Nhóm 1 · Mạo từ a/an", wrong_text: "an new adult / an talent artist", right_text: "a new adult / a talented artist", count: 2 },
+    SeedErrorLog { category: "Nhóm 2 · Nhầm từ", wrong_text: "a good change to develop", right_text: "a good chance to develop", count: 2 },
+    SeedErrorLog { category: "Nhóm 2 · Effect/Affect", wrong_text: "can effect our lives", right_text: "can affect our lives", count: 2 },
+    SeedErrorLog { category: "Nhóm 2 · Từ loại", wrong_text: "harmfully effects / In additionally", right_text: "harmful effects / In addition", count: 2 },
+    SeedErrorLog { category: "Nhóm 3 · Comma splice", wrong_text: "...university students, they are...", right_text: "...students, as they are... (hoặc tách câu)", count: 2 },
+    SeedErrorLog { category: "Nhóm 3 · Câu cụt", wrong_text: "Firstly, positive point about students can learn...", right_text: "One advantage of letting students study what they love is that...", count: 2 },
+    SeedErrorLog { category: "Reading · T/F/NG", wrong_text: "Bỏ qua từ tuyệt đối every/all/only/most", right_text: "Soi kỹ từ tuyệt đối & phân biệt ý kiến vs sự thật", count: 2 },
+    SeedErrorLog { category: "Reading · Paraphrase", wrong_text: "Nhầm were delivering ↔ introduce", right_text: "Soi nghĩa đối lập thật (within a few months ↔ several years)", count: 2 },
+];
+
+pub const ERROR_LOG_SEEDS_80: &[SeedErrorLog] = &[
+    SeedErrorLog { category: "W · Thiếu Hedging", wrong_text: "All people / will definitely cause", right_text: "Much of the populace tends to / may arguably precipitate", count: 3 },
+    SeedErrorLog { category: "W · Linker máy móc", wrong_text: "Firstly, ... Moreover, ... In conclusion,", right_text: "Dùng Semantic Referencing (This disparity / Such measures)", count: 3 },
+    SeedErrorLog { category: "W · Collocation C1", wrong_text: "make a research / big problem", right_text: "conduct empirical research / pressing predicament", count: 2 },
+    SeedErrorLog { category: "W · Thiếu Concession", wrong_text: "Chỉ nêu 1 chiều quan điểm", right_text: "Admittedly, ...; however, this overlooks...", count: 2 },
+    SeedErrorLog { category: "W · Dangling Participle", wrong_text: "Walking into the city, the pollution was severe.", right_text: "Walking into the city, commuters encountered severe pollution.", count: 2 },
+    SeedErrorLog { category: "W · Nominalization", wrong_text: "Because people consume too much plastic...", right_text: "Unrestrained plastic consumption has exacerbated...", count: 2 },
+    SeedErrorLog { category: "Reading · T/F/NG P3", wrong_text: "Suy luận quá đà giữa False/No và Not Given", right_text: "Chỉ chọn False/No khi bài đọc phủ định trực tiếp mệnh đề", count: 2 },
+    SeedErrorLog { category: "Reading · MC Attitude", wrong_text: "Nhầm lẫn thái độ tác giả trong bài trừu tượng", right_text: "Bám sát từ chỉ thái độ (skeptical, cautious, endorsing)", count: 2 },
+    SeedErrorLog { category: "Listening · Part 3 Trap", wrong_text: "Bẫy đồng thuận giả rồi phủ định ngầm giữa 2 học giả", right_text: "Nghe hết câu phản hồi (I see your point, yet...)", count: 2 },
+    SeedErrorLog { category: "Speaking · Part 3", wrong_text: "Sa đà kể chuyện cá nhân", right_text: "Phân tích vĩ mô xã hội theo A.R.E.A + Speculating", count: 2 },
 ];

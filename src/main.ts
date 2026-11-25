@@ -161,6 +161,10 @@ function renderLevelCards(is80: boolean, extraClass: string): string {
   `;
 }
 
+function isAim80Mode(): boolean {
+  return (dash?.settings.target_band ?? 7.0) >= 7.5;
+}
+
 function renderApp() {
   if (!dash) return;
   const curTheme = normalizeTheme(dash.settings.theme);
@@ -388,7 +392,7 @@ function renderApp() {
             curCard
               ? `
             <div class="fc-stage" id="fcStage" tabindex="0" role="button">
-              <span class="fc-topic">${esc(curCard.topic.toUpperCase())} · BAND 6.5 · REPS ${curCard.reps}</span>
+              <span class="fc-topic">${esc(curCard.topic.toUpperCase())} · ${isAim80 ? 'BAND 8.0 (C1–C2)' : 'BAND 6.5'} · REPS ${curCard.reps}</span>
               <div class="fc-word">${esc(curCard.word)}</div>
               ${!cardFlipped ? `<div style="font-size:11px;color:var(--m-muted);">(Bấm vào thẻ để xem nghĩa & ví dụ)</div>` : ''}
               <div class="fc-back ${cardFlipped ? 'open' : ''}">
@@ -939,7 +943,10 @@ function bindEvents() {
       const focusNotes = (dash?.settings.writing_focus_notes || [])
         .map((n, i) => `${i + 1}. ${n}`)
         .join('\n');
-      const rubric = `Hãy đóng vai Giám khảo IELTS Writing chấm bài dưới đây theo 4 tiêu chí (TA, CC, LR, GRA) và trả kết quả rõ ràng bằng tiếng Việt + bản viết lại Band 6.5.\n\n[ĐIỂM YẾU CẦN SOI KỸ]:\n${focusNotes}\n\n[CHẾ ĐỘ]: ${writingMode}\n[ĐỀ BÀI]: ${p?.prompt || ''}\n\n[BÀI VIẾT]:\n${content}`;
+      const targetLabel = isAim80Mode()
+        ? 'bản viết lại Band 8.0 (ưu tiên collocations C1–C2, hedging học thuật & câu phức sắc sảo)'
+        : 'bản viết lại Band 6.5';
+      const rubric = `Hãy đóng vai Giám khảo IELTS Writing chấm bài dưới đây theo 4 tiêu chí (TA, CC, LR, GRA) và trả kết quả rõ ràng bằng tiếng Việt + ${targetLabel}.\n\n[ĐIỂM YẾU CẦN SOI KỸ]:\n${focusNotes}\n\n[CHẾ ĐỘ]: ${writingMode}\n[ĐỀ BÀI]: ${p?.prompt || ''}\n\n[BÀI VIẾT]:\n${content}`;
       await navigator.clipboard.writeText(rubric);
       writingStatusMsg = '✓ Đã copy prompt + bài viết vào Clipboard! Dán vào ChatGPT/Gemini web để chấm miễn phí.';
       writingStatusErr = false;
@@ -1260,6 +1267,9 @@ function bindEvents() {
     btn.onclick = async () => {
       const level = btn.dataset.pickLevel!;
       dash = await invoke<DashboardState>('set_study_level', { level });
+      dueCards = await invoke<VocabCard[]>('get_due_vocab');
+      cardIdx = 0;
+      cardFlipped = false;
       welcomeMsg =
         level === '8.0'
           ? '✓ Đã chuyển sang Lộ trình Nâng cao Aim 8.0 (nạp sẵn 40 từ C1–C2 & lộ trình 24 tuần KPI nâng cao).'
@@ -1273,6 +1283,9 @@ function bindEvents() {
     btn.onclick = async () => {
       const level = btn.dataset.pickLevel!;
       dash = await invoke<DashboardState>('set_study_level', { level });
+      dueCards = await invoke<VocabCard[]>('get_due_vocab');
+      cardIdx = 0;
+      cardFlipped = false;
       renderApp();
       document.getElementById('settingsModal')?.classList.add('open');
     };
@@ -1331,7 +1344,7 @@ function bindEvents() {
   const welcomeUseSampleBtn = document.getElementById('welcomeUseSampleBtn');
   if (welcomeUseSampleBtn) {
     welcomeUseSampleBtn.onclick = () => {
-      welcomeMsg = '✓ Đang dùng sẵn Lộ trình mẫu 24 tuần (Band 6.5).';
+      welcomeMsg = `✓ Đang dùng sẵn Lộ trình mẫu 24 tuần (${isAim80Mode() ? 'Band 8.0' : 'Band 6.5'}).`;
       welcomeOk = true;
       welcomeStep = 3;
       renderApp();
