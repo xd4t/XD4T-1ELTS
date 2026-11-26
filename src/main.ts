@@ -340,11 +340,21 @@ let pendingModalFocus = false;
 let pendingRestoreFocus = false;
 
 function getActiveDialogEl(): HTMLElement | null {
-  return (
-    document.querySelector<HTMLElement>('.modal-backdrop.open .modal-box') ||
-    document.querySelector<HTMLElement>('.studio-overlay.on') ||
-    document.querySelector<HTMLElement>('.v-drawer.on')
+  const candidates = Array.from(
+    document.querySelectorAll<HTMLElement>('.modal-backdrop.open .modal-box, .studio-overlay.on, .v-drawer.on')
   );
+  let bestEl: HTMLElement | null = null;
+  let bestZ = -Infinity;
+  for (const el of candidates) {
+    const layer = el.closest<HTMLElement>('.modal-backdrop') || el;
+    const parsed = Number.parseInt(window.getComputedStyle(layer).zIndex, 10);
+    const z = Number.isFinite(parsed) ? parsed : 0;
+    if (z >= bestZ) {
+      bestZ = z;
+      bestEl = el;
+    }
+  }
+  return bestEl;
 }
 
 function describeTriggerElement(el: HTMLElement | null): string | null {
@@ -4225,6 +4235,17 @@ function bindEvents() {
     if (lbl) lbl.textContent = 'Gemini API Key (Chưa có)';
     const clearBtn = document.getElementById('clearKeyBtn') as HTMLButtonElement | null;
     if (clearBtn) clearBtn.disabled = true;
+    const topbarStatus = document.getElementById('topbarApiStatus');
+    if (topbarStatus) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'stat-pill stat-pill-btn';
+      btn.id = 'bannerOpenSettingsBtn';
+      btn.title = 'Chưa có Gemini API Key — bấm để nạp miễn phí hoặc dùng Copy-Prompt';
+      btn.innerHTML = '<span>API:</span> <b>Chưa có · + Nạp Key</b>';
+      btn.onclick = openSettings;
+      topbarStatus.replaceWith(btn);
+    }
   };
 
   document.getElementById('settingsToRoadmapBtn')!.onclick = () => {
