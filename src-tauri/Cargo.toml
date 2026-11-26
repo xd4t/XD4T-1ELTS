@@ -1,6 +1,6 @@
 [package]
 name = "xd4t-ielts65"
-version = "1.7.0"
+version = "1.7.1"
 description = "XD4T IELTS 6.5 Self-Study Desktop App"
 authors = ["XD4T"]
 edition = "2021"
