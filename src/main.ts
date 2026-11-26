@@ -333,6 +333,101 @@ let widgetStatusMsg = '';
 let pomoSecs = 15 * 60;
 let pomoTimer: number | null = null;
 
+// Modal A11y Focus Trap & Trigger Restoration State
+let lastModalTriggerEl: HTMLElement | null = null;
+let lastModalTriggerKey: string | null = null;
+let pendingModalFocus = false;
+let pendingRestoreFocus = false;
+
+function getActiveDialogEl(): HTMLElement | null {
+  return (
+    document.querySelector<HTMLElement>('.modal-backdrop.open .modal-box') ||
+    document.querySelector<HTMLElement>('.studio-overlay.on') ||
+    document.querySelector<HTMLElement>('.v-drawer.on')
+  );
+}
+
+function describeTriggerElement(el: HTMLElement | null): string | null {
+  if (!el || el === document.body) return null;
+  if (el.id) return `#${CSS.escape(el.id)}`;
+  const attrNames = ['data-band-skill', 'data-go', 'data-tab', 'data-vsub', 'data-rtab'];
+  for (const attr of attrNames) {
+    const val = el.getAttribute(attr);
+    if (val) return `[${attr}="${CSS.escape(val)}"]`;
+  }
+  return null;
+}
+
+function rememberModalTrigger(): void {
+  if (getActiveDialogEl()) return;
+  const active = document.activeElement as HTMLElement | null;
+  if (active && active !== document.body && document.getElementById('app')?.contains(active)) {
+    lastModalTriggerEl = active;
+    lastModalTriggerKey = describeTriggerElement(active);
+  } else {
+    lastModalTriggerEl = null;
+    lastModalTriggerKey = null;
+  }
+}
+
+function getFocusableElements(container: HTMLElement): HTMLElement[] {
+  const selector =
+    'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), summary';
+  return Array.from(container.querySelectorAll<HTMLElement>(selector)).filter(
+    (el) => el.offsetParent !== null || el.getClientRects().length > 0
+  );
+}
+
+function focusActiveDialog(): void {
+  const dlg = getActiveDialogEl();
+  if (!dlg) return;
+  const focusables = getFocusableElements(dlg);
+  if (focusables.length > 0) {
+    focusables[0].focus();
+  } else {
+    dlg.focus();
+  }
+}
+
+function restoreModalTriggerFocus(): void {
+  const candidate =
+    lastModalTriggerEl && lastModalTriggerEl.isConnected
+      ? lastModalTriggerEl
+      : lastModalTriggerKey
+        ? document.querySelector<HTMLElement>(lastModalTriggerKey)
+        : null;
+  lastModalTriggerEl = null;
+  lastModalTriggerKey = null;
+  if (candidate && candidate.isConnected) {
+    candidate.focus();
+  }
+}
+
+function openClassModal(modalEl: HTMLElement): void {
+  rememberModalTrigger();
+  modalEl.classList.add('open');
+  focusActiveDialog();
+}
+
+function closeClassModal(modalEl: HTMLElement): void {
+  modalEl.classList.remove('open');
+  if (!getActiveDialogEl()) {
+    restoreModalTriggerFocus();
+  }
+}
+
+function applyThemeInPlace(rawTheme: string): void {
+  const nextTheme = normalizeTheme(rawTheme);
+  document.documentElement.className = `theme-${nextTheme}`;
+  const shell = document.getElementById('shell');
+  if (shell) shell.className = `app-shell theme-${nextTheme}`;
+  const themeSel = document.getElementById('themeSelect') as HTMLSelectElement | null;
+  if (themeSel) themeSel.value = nextTheme;
+  document.querySelectorAll<HTMLButtonElement>('.settings-theme-card, .welcome-theme-card').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.pickTheme === nextTheme);
+  });
+}
+
 function extractApiKeyFromText(raw: string): string {
   const lines = raw.split(/\r?\n/);
   for (const line of lines) {
@@ -555,6 +650,7 @@ async function loadSpeakingCue(randomNext = false): Promise<void> {
 }
 
 async function openSpeakingStudio(): Promise<void> {
+  rememberModalTrigger();
   stopMicroTimer();
   window.speechSynthesis?.cancel();
   studioOpen = true;
@@ -565,6 +661,7 @@ async function openSpeakingStudio(): Promise<void> {
   if (!studioCue) {
     await loadSpeakingCue(false);
   }
+  pendingModalFocus = true;
   renderApp();
 }
 
@@ -579,6 +676,7 @@ function closeSpeakingStudio(): void {
   studioPlaybackAudio = null;
   revokeRecordedBlobs();
   studioOpen = false;
+  pendingRestoreFocus = true;
   renderApp();
 }
 
@@ -632,11 +730,13 @@ async function switchStudyLevel(level: string): Promise<void> {
 }
 
 function openAiPackModal(): void {
+  rememberModalTrigger();
   const weekIdx = dash ? (Math.max(1, dash.current_week) - 1) % IELTS_TOPICS.length : 0;
   aiPackTopic = IELTS_TOPICS[weekIdx];
   aiPackResult = null;
   aiPackError = '';
   aiPackOpen = true;
+  pendingModalFocus = true;
   renderApp();
 }
 
@@ -1439,7 +1539,7 @@ function renderSpeakingStudio(): string {
 
   return `
     <div class="v-backdrop ${studioOpen || addVocabOpen ? 'on' : ''}" id="vBackdrop"></div>
-    <div class="studio-overlay ${studioOpen ? 'on' : ''}" id="speakStudioModal" role="dialog" aria-label="Phòng Luyện Nói">
+    <div class="studio-overlay ${studioOpen ? 'on' : ''}" id="speakStudioModal" role="dialog" aria-modal="true" aria-label="Phòng Luyện Nói" tabindex="-1">
       <div class="studio-head">
         <b>🎙️ Phòng Luyện Nói</b>
         <span class="small muted">Phiên tự lưu metadata · audio chỉ giữ tạm trong phiên</span>
@@ -1524,7 +1624,7 @@ function renderSpeakingStudio(): string {
             <button type="button" class="btn btn-primary" id="studioGoBtn">${studioRunning ? '⏸ Dừng' : '● Bắt đầu'} <kbd style="color:inherit;border-color:currentColor;">Ctrl+Space</kbd></button>
             <button type="button" class="btn" id="studioNextStageBtn">⏭ Chặng sau <kbd>Alt+N</kbd></button>
             <button type="button" class="btn" id="studioReplayBtn" ${recordedBlobs.length === 0 ? 'disabled' : ''}>▶ Nghe lại</button>
-            <button type="button" class="btn" id="studioSaveAudioBtn" ${recordedBlobs.length === 0 ? 'disabled' : ''}>💾 Lưu file</button>
+            <button type="button" class="btn" id="studioSaveAudioBtn" title="Tải file ghi âm (.webm) về máy" ${recordedBlobs.length === 0 ? 'disabled' : ''}>💾 Lưu audio</button>
           </div>
           ${
             recordedBlobs.length >= 2
@@ -1544,14 +1644,14 @@ function renderSpeakingStudio(): string {
           <div class="speak-score-box">
             <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:6px;">
               <span class="label-uc">Chấm điểm Speaking</span>
-              <span class="row" style="gap:6px;">
+              <span class="row" style="gap:6px;flex-wrap:wrap;">
                 ${
                   dash.speaking_sessions.length > 0
-                    ? `<button type="button" class="btn btn-sm" id="toggleSpeakHistoryBtn">📜 Lịch sử (${dash.speaking_sessions.length} phiên)</button>`
+                    ? `<button type="button" class="btn btn-sm" id="toggleSpeakHistoryBtn" title="Xem lịch sử ${dash.speaking_sessions.length} phiên Speaking">📜 Lịch sử (${dash.speaking_sessions.length})</button>`
                     : ''
                 }
-                <button type="button" class="btn btn-primary btn-sm" id="gradeSpeakingAiBtn" ${isGradingSpeaking ? 'disabled' : ''}>
-                  ${isGradingSpeaking ? 'ĐANG CHẤM AUDIO...' : '✨ Chấm AI (Gemini Audio)'} <kbd style="color:inherit;border-color:currentColor;">Ctrl+Enter</kbd>
+                <button type="button" class="btn btn-primary btn-sm" id="gradeSpeakingAiBtn" title="Chấm bằng Gemini Audio (Ctrl+Enter)" ${isGradingSpeaking ? 'disabled' : ''}>
+                  ${isGradingSpeaking ? 'ĐANG CHẤM...' : '✨ Chấm AI'} <kbd style="color:inherit;border-color:currentColor;">Ctrl+Enter</kbd>
                 </button>
               </span>
             </div>
@@ -1586,8 +1686,7 @@ function renderSpeakingStudio(): string {
             }
 
             <div class="speak-fallback">
-              <span class="small muted" style="width:100%;">Chưa có API key? Dùng quy trình miễn phí:</span>
-              <button type="button" class="btn btn-sm" id="fallbackDownloadAudioBtn" ${recordedBlobs.length === 0 ? 'disabled' : ''}>⬇ Tải file ghi âm</button>
+              <span class="small muted">Chưa có API key? Lưu audio ở trên rồi dùng:</span>
               <button type="button" class="btn btn-sm" id="fallbackCopyPromptBtn">📋 Copy Prompt + Rubric</button>
               <button type="button" class="btn btn-sm" id="toggleManualCheckBtn">✓ Tự chấm 5 mục</button>
             </div>
@@ -1612,7 +1711,7 @@ function renderSpeakingStudio(): string {
                   </label>`
                   )
                   .join('')}
-                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:6px;">
+                <div class="speak-manual-bands">
                   <label>FC<input type="number" step="0.5" min="1" max="9" class="text-input" id="mBandFc" value="${esc(manualBandFc)}" style="width:100%;" /></label>
                   <label>LR<input type="number" step="0.5" min="1" max="9" class="text-input" id="mBandLr" value="${esc(manualBandLr)}" style="width:100%;" /></label>
                   <label>GRA<input type="number" step="0.5" min="1" max="9" class="text-input" id="mBandGra" value="${esc(manualBandGra)}" style="width:100%;" /></label>
@@ -1659,7 +1758,7 @@ function renderSpeakingStudio(): string {
     </div>
 
     <!-- Drawer + Thêm từ (Sentence Mining) -->
-    <aside class="v-drawer ${addVocabOpen ? 'on' : ''}" id="addVocabDrawer" aria-label="Thêm từ">
+    <aside class="v-drawer ${addVocabOpen ? 'on' : ''}" id="addVocabDrawer" role="dialog" aria-modal="true" aria-label="Thêm từ" tabindex="-1">
       <div class="row" style="justify-content:space-between;">
         <b>+ Thêm từ (Sentence Mining)</b>
         <button type="button" class="btn ghost ibtn" id="closeAddVocabBtn">✕</button>
@@ -1747,7 +1846,11 @@ function renderApp() {
         <div class="brand-pill">${isAim80 ? 'XD4T // IELTS 8.0' : 'XD4T // IELTS 6.5'}</div>
         <div class="stat-pill"><span>THI ${esc(dash.settings.exam_date)}:</span> <b class="mono-num">${dash.days_until_exam}d</b></div>
         <div class="stat-pill"><span>STREAK:</span> <b class="mono-num">${dash.streak} ngày</b></div>
-        <div class="stat-pill"><span>API:</span> <b>${dash.settings.has_api_key ? 'SẴN SÀNG' : 'CHƯA CÓ KEY'}</b></div>
+        ${
+          dash.settings.has_api_key
+            ? `<div class="stat-pill" id="topbarApiStatus"><span>API:</span> <b>SẴN SÀNG</b></div>`
+            : `<button type="button" class="stat-pill stat-pill-btn" id="bannerOpenSettingsBtn" title="Chưa có Gemini API Key — bấm để nạp miễn phí hoặc dùng Copy-Prompt"><span>API:</span> <b>Chưa có · + Nạp Key</b></button>`
+        }
       </div>
       <div class="tb-right">
         <button class="btn btn-sm mono-num" id="pomoBtn" title="Bật/tạm dừng đếm ngược 15 phút">⏱ ${formatPomo(pomoSecs)}</button>
@@ -1776,14 +1879,6 @@ function renderApp() {
             ? `<div class="api-banner" role="status">
                 <span>${esc(autoRefillToastMsg)}</span>
                 <button class="btn btn-sm" id="dismissAutoRefillToastBtn" type="button">Đóng</button>
-              </div>`
-            : ''
-        }
-        ${
-          !dash.settings.has_api_key
-            ? `<div class="api-banner">
-                <span>Chưa có Gemini API Key — bấm <b>Cài đặt</b> để nạp miễn phí hoặc dùng <b>Copy-Prompt</b></span>
-                <button class="btn btn-sm" id="bannerOpenSettingsBtn">NẠP API KEY</button>
               </div>`
             : ''
         }
@@ -1892,11 +1987,10 @@ function renderApp() {
             <div class="box">
               <div class="label-uc" style="margin-bottom:8px;">Quick Actions (1 chạm)</div>
               <div class="qa-grid">
-                <button type="button" class="btn" data-go="speak">🎙️ Phòng Luyện Nói <kbd>Alt+S</kbd></button>
-                <button type="button" class="btn" data-go="vocab:dict">🎧 Nghe chép câu</button>
-                <button type="button" class="btn" data-go="vocab:quiz:micro">⚡ Micro-Check 2p</button>
-                <button type="button" class="btn" data-go="writing">📝 Viết bài</button>
-                <button type="button" class="btn" id="openAiPackTab1Btn">✨ Nạp thêm bài (AI)</button>
+                <button type="button" class="btn" data-go="speak" title="Phòng Luyện Nói (Alt+S)"><span class="qa-label">🎙️ Phòng Luyện Nói</span> <kbd>Alt+S</kbd></button>
+                <button type="button" class="btn" data-go="vocab:dict" title="Nghe chép câu (Dictation)"><span class="qa-label">🎧 Nghe chép câu</span></button>
+                <button type="button" class="btn" data-go="vocab:quiz:micro" title="Micro-Check 2 phút"><span class="qa-label">⚡ Micro-Check 2p</span></button>
+                <button type="button" class="btn" id="openAiPackTab1Btn" title="Nạp thêm bài (AI)"><span class="qa-label">✨ Nạp thêm bài (AI)</span></button>
               </div>
             </div>
           </div>
@@ -1933,7 +2027,7 @@ function renderApp() {
                   .join('')}
               </ol>
             </div>
-            <button type="button" class="btn ghost ibtn" id="toggleTop3Btn" aria-expanded="${!top3Collapsed}" title="Thu gọn [Alt+T]">${top3Collapsed ? '▾' : '▴'} <kbd>Alt+T</kbd></button>
+            <button type="button" class="btn btn-sm ghost top3-toggle-btn" id="toggleTop3Btn" aria-expanded="${!top3Collapsed}" title="Thu gọn [Alt+T]">${top3Collapsed ? '▾' : '▴'} <kbd>Alt+T</kbd></button>
           </div>`
             : ''
         }
@@ -1988,8 +2082,8 @@ function renderApp() {
               </div>`
                 : ''
             }
-            <div class="checklist-3m">
-              <div style="font-weight:700;color:var(--m-muted);margin-bottom:4px;text-transform:uppercase;">CHECKLIST SOÁT LỖI 3 PHÚT TRƯỚC KHI NỘP:</div>
+            <details class="checklist-3m" ${writingMode === 'task1' || Boolean(curPrompt?.chart_spec_json) || Boolean(customTask1ImageDataUrl) ? '' : 'open'}>
+              <summary>CHECKLIST SOÁT LỖI 3 PHÚT TRƯỚC KHI NỘP (${dash.settings.writing_checklist.length} MỤC)</summary>
               <div class="checklist-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;">
                 ${dash.settings.writing_checklist
                   .map(
@@ -1998,7 +2092,7 @@ function renderApp() {
                   )
                   .join('')}
               </div>
-            </div>
+            </details>
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:6px;flex-wrap:wrap;">
               <div style="display:flex;gap:6px;flex-wrap:wrap;">
                 <button class="btn btn-sm" id="copyPromptBtn">COPY PROMPT CHẤM AI</button>
@@ -2026,7 +2120,7 @@ function renderApp() {
               ${lastGrade.summary_vi ? `<div style="font-size:11.5px;margin-bottom:8px;"><b>Nhận xét:</b> ${esc(lastGrade.summary_vi)}</div>` : ''}
               <div style="font-size:11.5px;margin-bottom:8px;">
                 <b>Sửa lỗi trực tiếp:</b>
-                <div style="border:1px solid var(--m-line);background:var(--m-bg);padding:8px;margin-top:4px;line-height:1.65;">
+                <div class="grade-result-box">
                   ${lastGrade.corrections
                     .map(
                       (c) =>
@@ -2037,7 +2131,7 @@ function renderApp() {
               </div>
               <div style="font-size:11.5px;">
                 <b>Bài mẫu nâng Band ${isAim80 ? '7.5–8.0' : '6.5'}:</b>
-                <div style="border:1px solid var(--m-line);background:var(--m-bg);padding:8px;margin-top:4px;color:var(--m-muted);">
+                <div class="grade-result-box muted-copy">
                   ${esc(lastGrade.band65_rewrite)}
                 </div>
               </div>
@@ -2134,10 +2228,12 @@ function renderApp() {
                     <tr><th>Nguồn / Loại</th><th>Hay mắc</th><th>Sửa chuẩn</th><th>Trạng thái trị lỗi</th><th>Lần</th></tr>
                   </thead>
                   <tbody>
-                    ${dash.error_logs
-                      .map(
-                        (e) =>
-                          `<tr>
+                    ${
+                      dash.error_logs.length > 0
+                        ? dash.error_logs
+                            .map(
+                              (e) =>
+                                `<tr>
                             <td>
                               <span class="tag soft">${esc(e.category)}</span>
                               <div class="small muted" style="margin-top:2px;">${esc(e.drill_mode)}</div>
@@ -2158,8 +2254,10 @@ function renderApp() {
                             </td>
                             <td>${e.count}</td>
                           </tr>`
-                      )
-                      .join('')}
+                            )
+                            .join('')
+                        : `<tr><td colspan="5" class="table-empty-cell">Chưa có lỗi nào trong Sổ lỗi. Hãy nhập lỗi sai &amp; cách sửa chuẩn ở trên hoặc bấm <b>+ LƯU LỖI VÀO SỔ</b> sau khi chấm bài.</td></tr>`
+                    }
                   </tbody>
                 </table>
               </div>`
@@ -2171,7 +2269,7 @@ function renderApp() {
                 <input class="text-input" id="paraTrap" placeholder="Ghi chú / Bẫy" style="flex:1;min-width:100px;" />
                 <button type="button" class="btn btn-sm btn-primary" id="addParaBtn">+ THÊM</button>
               </div>
-              ${paraFormMsg ? `<div class="status-msg ${paraFormErr ? 'err' : 'ok'}" style="margin-bottom:6px;">${esc(paraFormMsg)}</div>` : ''}
+              <div id="paraFormMsg" class="status-msg ${paraFormErr ? 'err' : paraFormMsg ? 'ok' : ''}" style="margin-bottom:6px;${paraFormMsg ? '' : 'display:none;'}">${esc(paraFormMsg)}</div>
               <div class="log-table-wrap" style="max-height:360px;">
                 <table class="para-table">
                   <colgroup>
@@ -2184,9 +2282,11 @@ function renderApp() {
                     <tr><th>Từ câu hỏi</th><th>Trong bài đọc</th><th>Nguồn / Dạng</th><th>Ghi chú / Bẫy</th></tr>
                   </thead>
                   <tbody>
-                    ${dash.paraphrase_pairs
-                      .map(
-                        (p) => `
+                    ${
+                      dash.paraphrase_pairs.length > 0
+                        ? dash.paraphrase_pairs
+                            .map(
+                              (p) => `
                       <tr>
                         <td><b>${esc(p.question_term)}</b> ${p.source === 'ai_pack' ? '<span class="tag ai-pack">✨ Mới nạp</span>' : ''}</td>
                         <td>${esc(p.passage_paraphrase)}</td>
@@ -2198,8 +2298,10 @@ function renderApp() {
                           </div>
                         </td>
                       </tr>`
-                      )
-                      .join('')}
+                            )
+                            .join('')
+                        : `<tr><td colspan="4" class="table-empty-cell">Chưa có cặp Paraphrase nào. Hãy thêm từ câu hỏi &amp; cụm tương ứng trong bài đọc ở trên để tự động nuôi vào Micro-Check 2 phút.</td></tr>`
+                    }
                   </tbody>
                 </table>
               </div>
@@ -2225,8 +2327,8 @@ function renderApp() {
 
     <!-- AI CONTENT PACK REFILL MODAL -->
     <div class="modal-backdrop ${aiPackOpen ? 'open' : ''}" id="aiPackModal">
-      <div class="modal-box modal-wide">
-        <div class="box-title"><span>✨ NẠP GÓI CHỦ ĐỀ MỚI (GEMINI OFFLINE REFILL)</span><button class="btn btn-sm" id="closeAiPackBtn">✕</button></div>
+      <div class="modal-box modal-wide" role="dialog" aria-modal="true" aria-labelledby="aiPackModalTitle" tabindex="-1">
+        <div class="box-title"><span id="aiPackModalTitle">✨ NẠP GÓI CHỦ ĐỀ MỚI (GEMINI OFFLINE REFILL)</span><button class="btn btn-sm" id="closeAiPackBtn">✕</button></div>
         <div class="small muted" style="margin-bottom:8px;">
           Chỉ <b>1 HTTP Request duy nhất</b> nạp trọn <b>25 bài liên kết nhau</b> (+10 Collocations · +5 Dictation · +2 Đề Writing · +5 Paraphrase · +3 Luyện lỗi bám Top 3) cho Track <b>${isAim80 ? '8.0' : '6.5'}</b> để học offline mãi mãi.
         </div>
@@ -2268,8 +2370,8 @@ function renderApp() {
 
     <!-- KEYBOARD CHEATSHEET OVERLAY -->
     <div class="modal-backdrop ${shortcutsModalOpen ? 'open' : ''}" id="shortcutsModal">
-      <div class="modal-box modal-wide">
-        <div class="box-title"><span>⌨️ BẢNG PHÍM TẮT LIÊN TỤC (0 CHẠM CHUỘT)</span><button class="btn btn-sm" id="closeShortcutsBtn">✕</button></div>
+      <div class="modal-box modal-wide" role="dialog" aria-modal="true" aria-labelledby="shortcutsModalTitle" tabindex="-1">
+        <div class="box-title"><span id="shortcutsModalTitle">⌨️ BẢNG PHÍM TẮT LIÊN TỤC (0 CHẠM CHUỘT)</span><button class="btn btn-sm" id="closeShortcutsBtn">✕</button></div>
         <div class="kbd-grid">
           <div class="kbd-section">
             <div class="kbd-section-title">Toàn ứng dụng</div>
@@ -2305,8 +2407,8 @@ function renderApp() {
 
     <!-- SETTINGS MODAL -->
     <div class="modal-backdrop" id="settingsModal">
-      <div class="modal-box modal-wide">
-        <div class="box-title"><span>CÀI ĐẶT HỆ THỐNG &amp; DỮ LIỆU</span><button class="btn btn-sm" id="closeSettingsBtn">✕</button></div>
+      <div class="modal-box modal-wide" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle" tabindex="-1">
+        <div class="box-title"><span id="settingsModalTitle">CÀI ĐẶT HỆ THỐNG &amp; DỮ LIỆU</span><button class="btn btn-sm" id="closeSettingsBtn">✕</button></div>
 
         <div class="form-row">
           <label>Chọn giao diện (4 phong cách · đổi tức thì)</label>
@@ -2332,12 +2434,12 @@ function renderApp() {
             <button class="btn btn-sm" id="exportBackupBtn" type="button">💾 Xuất file sao lưu (.db)</button>
             <button class="btn btn-sm" id="importBackupBtn" type="button">📂 Khôi phục từ file (.db)</button>
           </div>
-          ${backupMsg ? `<div class="status-msg ${backupOk === true ? 'ok' : backupOk === false ? 'err' : ''}">${esc(backupMsg)}</div>` : ''}
+          <div id="backupStatusMsg" class="status-msg ${backupOk === true ? 'ok' : backupOk === false ? 'err' : ''}" style="${backupMsg ? '' : 'display:none;'}">${esc(backupMsg)}</div>
           <label class="switch-row" style="margin-top:8px;">
             <input type="checkbox" id="setWidgetEnabled" ${widgetInfo.running || widgetInfo.autostart ? 'checked' : ''} />
             <span>Hiện thanh Widget nhỏ trên Taskbar Windows (tự khởi động cùng máy)</span>
           </label>
-          ${widgetStatusMsg ? `<div class="status-msg">${esc(widgetStatusMsg)}</div>` : ''}
+          <div id="widgetStatusMsg" class="status-msg" style="${widgetStatusMsg ? '' : 'display:none;'}">${esc(widgetStatusMsg)}</div>
         </div>
 
         <details class="guide-box guide-details">
@@ -2350,7 +2452,7 @@ function renderApp() {
           </div>
         </details>
         <div class="form-row">
-          <label>Gemini API Key ${dash.settings.has_api_key ? `(Đang lưu: ${esc(dash.settings.api_key_masked)})` : '(Chưa có)'}</label>
+          <label id="setKeyLabel">Gemini API Key ${dash.settings.has_api_key ? `(Đang lưu: ${esc(dash.settings.api_key_masked)})` : '(Chưa có)'}</label>
           <div class="input-group">
             <input type="${showApiKey ? 'text' : 'password'}" id="setKey" placeholder="Dán key AIza... hoặc để trống để giữ key cũ" />
             <button class="btn btn-sm" id="toggleKeyVisBtn" type="button">${showApiKey ? 'ẨN' : 'HIỆN'}</button>
@@ -2361,7 +2463,7 @@ function renderApp() {
             <button class="btn btn-sm" id="testApiBtn" type="button" ${isTestingApi ? 'disabled' : ''}>${isTestingApi ? 'ĐANG KIỂM TRA...' : 'KIỂM TRA KẾT NỐI API'}</button>
             <button class="btn btn-sm" id="clearKeyBtn" type="button" ${!dash.settings.has_api_key ? 'disabled' : ''}>XÓA KEY</button>
           </div>
-          ${apiTestMsg ? `<div class="status-msg ${apiTestOk === true ? 'ok' : apiTestOk === false ? 'err' : ''}">${esc(apiTestMsg)}</div>` : ''}
+          <div id="apiTestMsg" class="status-msg ${apiTestOk === true ? 'ok' : apiTestOk === false ? 'err' : ''}" style="${apiTestMsg ? '' : 'display:none;'}">${esc(apiTestMsg)}</div>
         </div>
         <div class="form-row">
           <label>Model Gemini</label>
@@ -2428,9 +2530,9 @@ function renderApp() {
 
     <!-- WELCOME WIZARD MODAL -->
     <div class="modal-backdrop ${welcomeOpen ? 'open' : ''}" id="welcomeModal">
-      <div class="modal-box modal-wide">
+      <div class="modal-box modal-wide" role="dialog" aria-modal="true" aria-labelledby="welcomeModalTitle" tabindex="-1">
         <div class="box-title">
-          <span>${welcomeStep === 4 ? 'CHÀO MỪNG TỚI XD4T IELTS · HOÀN TẤT THIẾT LẬP' : `CHÀO MỪNG TỚI XD4T IELTS · THIẾT LẬP NHANH (${welcomeStep}/3)`}</span>
+          <span id="welcomeModalTitle">${welcomeStep === 4 ? 'CHÀO MỪNG TỚI XD4T IELTS · HOÀN TẤT THIẾT LẬP' : `CHÀO MỪNG TỚI XD4T IELTS · THIẾT LẬP NHANH (${welcomeStep}/3)`}</span>
           <button class="btn btn-sm" id="skipWelcomeBtn" type="button">Bỏ qua</button>
         </div>
         <div class="wizard-steps">
@@ -2507,9 +2609,9 @@ function renderApp() {
 
     <!-- CHART ZOOM LIGHTBOX MODAL -->
     <div class="modal-backdrop ${chartZoomOpen ? 'open' : ''}" id="chartZoomModal">
-      <div class="modal-box modal-wide">
+      <div class="modal-box modal-wide" role="dialog" aria-modal="true" aria-labelledby="chartZoomModalTitle" tabindex="-1">
         <div class="box-title">
-          <span>📊 XEM BIỂU ĐỒ / SƠ ĐỒ TASK 1</span>
+          <span id="chartZoomModalTitle">📊 XEM BIỂU ĐỒ / SƠ ĐỒ TASK 1</span>
           <button class="btn btn-sm" id="closeChartZoomBtn" type="button">✕ Đóng</button>
         </div>
         <div class="chart-zoom-body">
@@ -2527,8 +2629,8 @@ function renderApp() {
 
     <!-- ROADMAP IMPORT MODAL -->
     <div class="modal-backdrop" id="roadmapModal">
-      <div class="modal-box modal-wide">
-        <div class="box-title"><span>NẠP LỘ TRÌNH CÁ NHÂN (.MD)</span><button class="btn btn-sm" id="closeRoadmapBtn">✕</button></div>
+      <div class="modal-box modal-wide" role="dialog" aria-modal="true" aria-labelledby="roadmapModalTitle" tabindex="-1">
+        <div class="box-title"><span id="roadmapModalTitle">NẠP LỘ TRÌNH CÁ NHÂN (.MD)</span><button class="btn btn-sm" id="closeRoadmapBtn">✕</button></div>
         <div class="step-card">
           <div class="step-head"><span>Bước 1 — Tạo hoặc xem mẫu file lộ trình v1.6.0</span></div>
           <div class="small muted" style="margin-bottom:8px;">Hỗ trợ đầy đủ: <code>## Nhiệm vụ Core</code>, <code>## Bảng Paraphrase</code>, <code>## Sentence Mining</code>, <code>- [ ] Tuần X</code> và bảng Markdown.</div>
@@ -2584,8 +2686,8 @@ function renderApp() {
 
     <!-- SCORE MODAL -->
     <div class="modal-backdrop" id="scoreModal">
-      <div class="modal-box">
-        <div class="box-title"><span>NHẬP ĐIỂM ĐỀ VỪA LÀM</span><button class="btn btn-sm" id="closeScoreBtn">✕</button></div>
+      <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="scoreModalTitle" tabindex="-1">
+        <div class="box-title"><span id="scoreModalTitle">NHẬP ĐIỂM ĐỀ VỪA LÀM</span><button class="btn btn-sm" id="closeScoreBtn">✕</button></div>
         <div class="form-row"><label>Kỹ năng</label>
           <select id="scSkill"><option value="Listening">Listening</option><option value="Reading">Reading</option><option value="Writing">Writing</option><option value="Speaking">Speaking</option></select>
         </div>
@@ -2605,6 +2707,19 @@ function renderApp() {
 }
 
 function applyContextAutoFocus(): void {
+  const activeDialog = getActiveDialogEl();
+  if (activeDialog) {
+    if (pendingModalFocus) {
+      pendingModalFocus = false;
+      focusActiveDialog();
+    }
+    return;
+  }
+  if (pendingRestoreFocus) {
+    pendingRestoreFocus = false;
+    restoreModalTriggerFocus();
+    return;
+  }
   const anyOverlayOpen =
     studioOpen ||
     addVocabOpen ||
@@ -2675,6 +2790,7 @@ async function finishOnboarding(extraKey?: string) {
   welcomeOpen = false;
   welcomeMsg = '';
   welcomeOk = null;
+  pendingRestoreFocus = true;
   renderApp();
 }
 
@@ -2707,7 +2823,7 @@ function bindEvents() {
     themeSelect.onchange = async () => {
       if (!dash) return;
       dash.settings = await invoke('update_settings', { theme: themeSelect.value });
-      renderApp();
+      applyThemeInPlace(dash.settings.theme);
     };
   }
 
@@ -2754,16 +2870,20 @@ function bindEvents() {
   }
 
   document.getElementById('zoomChartBtn')?.addEventListener('click', () => {
+    rememberModalTrigger();
     chartZoomOpen = true;
+    pendingModalFocus = true;
     renderApp();
   });
   document.getElementById('closeChartZoomBtn')?.addEventListener('click', () => {
     chartZoomOpen = false;
+    pendingRestoreFocus = true;
     renderApp();
   });
   document.getElementById('chartZoomModal')?.addEventListener('click', (e) => {
     if (e.target === document.getElementById('chartZoomModal')) {
       chartZoomOpen = false;
+      pendingRestoreFocus = true;
       renderApp();
     }
   });
@@ -3112,6 +3232,7 @@ function bindEvents() {
   const openAddVocabBtn = document.getElementById('openAddVocabBtn');
   if (openAddVocabBtn) {
     openAddVocabBtn.onclick = () => {
+      rememberModalTrigger();
       addVocabOpen = true;
       addVocabMsg = '';
       renderApp();
@@ -3120,6 +3241,7 @@ function bindEvents() {
   }
   const closeDrawer = () => {
     addVocabOpen = false;
+    pendingRestoreFocus = true;
     renderApp();
   };
   document.getElementById('closeAddVocabBtn')?.addEventListener('click', closeDrawer);
@@ -3153,6 +3275,7 @@ function bindEvents() {
         addVocabExample = '';
         addVocabMsg = '';
         addVocabOpen = false;
+        pendingRestoreFocus = true;
         dash = await invoke<DashboardState>('get_dashboard');
         dueCards = await invoke<VocabCard[]>('get_due_vocab', { onlyLeech: onlyLeechFilter });
         cardIdx = 0;
@@ -3695,7 +3818,13 @@ function bindEvents() {
     if (!wrongText || !rightText) {
       errFormMsg = '✕ Vui lòng nhập đầy đủ Lỗi sai và Cách sửa chuẩn.';
       errFormErr = true;
-      renderApp();
+      const msgEl = document.getElementById('errFormMsg');
+      if (msgEl) {
+        msgEl.textContent = errFormMsg;
+        msgEl.style.color = 'var(--m-err)';
+        msgEl.style.display = 'block';
+      }
+      (!wrongText ? wrongInput : rightInput).focus();
       return;
     }
     errFormMsg = '✓ Đã thêm vào Sổ lỗi';
@@ -3706,14 +3835,22 @@ function bindEvents() {
   });
 
   document.getElementById('addParaBtn')?.addEventListener('click', async () => {
-    const qTerm = (document.getElementById('paraQTerm') as HTMLInputElement).value.trim();
-    const pPass = (document.getElementById('paraPassage') as HTMLInputElement).value.trim();
+    const qTermInput = document.getElementById('paraQTerm') as HTMLInputElement;
+    const pPassInput = document.getElementById('paraPassage') as HTMLInputElement;
+    const qTerm = qTermInput.value.trim();
+    const pPass = pPassInput.value.trim();
     const pSrc = (document.getElementById('paraSource') as HTMLInputElement).value.trim() || 'Study4 Reading';
     const pTrap = (document.getElementById('paraTrap') as HTMLInputElement).value.trim();
     if (!qTerm || !pPass) {
       paraFormMsg = '✕ Nhập Từ câu hỏi và Trong bài đọc.';
       paraFormErr = true;
-      renderApp();
+      const msgEl = document.getElementById('paraFormMsg');
+      if (msgEl) {
+        msgEl.textContent = paraFormMsg;
+        msgEl.className = 'status-msg err';
+        msgEl.style.display = 'block';
+      }
+      (!qTerm ? qTermInput : pPassInput).focus();
       return;
     }
     dash = await invoke<DashboardState>('add_paraphrase', {
@@ -3764,7 +3901,10 @@ function bindEvents() {
   // Speaking Studio Overlay
   document.getElementById('closeStudioBtn')?.addEventListener('click', closeSpeakingStudio);
   document.getElementById('vBackdrop')?.addEventListener('click', () => {
-    if (addVocabOpen) addVocabOpen = false;
+    if (addVocabOpen) {
+      addVocabOpen = false;
+      pendingRestoreFocus = true;
+    }
     if (studioOpen) closeSpeakingStudio();
     else renderApp();
   });
@@ -3887,7 +4027,6 @@ function bindEvents() {
     a.click();
   };
   document.getElementById('studioSaveAudioBtn')?.addEventListener('click', downloadLastAudio);
-  document.getElementById('fallbackDownloadAudioBtn')?.addEventListener('click', downloadLastAudio);
 
   document.getElementById('gradeSpeakingAiBtn')?.addEventListener('click', async () => {
     if (!dash || !validateSpeakingCustomCue()) return;
@@ -4009,22 +4148,34 @@ function bindEvents() {
 
   // Settings, Welcome, Roadmap, Score Modals
   const settingsModal = document.getElementById('settingsModal')!;
-  const openSettings = () => settingsModal.classList.add('open');
+  const openSettings = () => openClassModal(settingsModal);
+  const closeSettings = () => closeClassModal(settingsModal);
   document.getElementById('openSettingsBtn')!.onclick = openSettings;
   document.getElementById('bannerOpenSettingsBtn')?.addEventListener('click', openSettings);
-  document.getElementById('closeSettingsBtn')!.onclick = () => settingsModal.classList.remove('open');
-  document.getElementById('cancelSettingsBtn')!.onclick = () => settingsModal.classList.remove('open');
+  document.getElementById('closeSettingsBtn')!.onclick = closeSettings;
+  document.getElementById('cancelSettingsBtn')!.onclick = closeSettings;
   settingsModal.onclick = (e) => {
-    if (e.target === settingsModal) settingsModal.classList.remove('open');
+    if (e.target === settingsModal) closeSettings();
   };
   document.getElementById('openAiStudioBtn')!.onclick = () => openUrl('https://aistudio.google.com/apikey');
 
+  const updateApiTestDom = (msg: string, ok: boolean | null) => {
+    apiTestMsg = msg;
+    apiTestOk = ok;
+    const el = document.getElementById('apiTestMsg');
+    if (el) {
+      el.textContent = msg;
+      el.className = `status-msg ${ok === true ? 'ok' : ok === false ? 'err' : ''}`.trim();
+      el.style.display = msg ? 'block' : 'none';
+    }
+  };
+
   document.getElementById('toggleKeyVisBtn')!.onclick = () => {
-    const typed = (document.getElementById('setKey') as HTMLInputElement).value;
     showApiKey = !showApiKey;
-    renderApp();
-    document.getElementById('settingsModal')!.classList.add('open');
-    (document.getElementById('setKey') as HTMLInputElement).value = typed;
+    const keyInput = document.getElementById('setKey') as HTMLInputElement;
+    const btn = document.getElementById('toggleKeyVisBtn')!;
+    keyInput.type = showApiKey ? 'text' : 'password';
+    btn.textContent = showApiKey ? 'ẨN' : 'HIỆN';
   };
 
   const apiKeyFileInput = document.getElementById('apiKeyFileInput') as HTMLInputElement;
@@ -4034,54 +4185,51 @@ function bindEvents() {
     if (!file) return;
     const text = await file.text();
     const extracted = extractApiKeyFromText(text);
-    apiTestMsg = extracted
-      ? `✓ Đã nạp key từ file (${file.name}). Bấm [KIỂM TRA KẾT NỐI API] hoặc [LƯU CÀI ĐẶT].`
-      : '✕ Không tìm thấy API Key hợp lệ trong file.';
-    apiTestOk = Boolean(extracted);
-    renderApp();
-    document.getElementById('settingsModal')!.classList.add('open');
+    updateApiTestDom(
+      extracted
+        ? `✓ Đã nạp key từ file (${file.name}). Bấm [KIỂM TRA KẾT NỐI API] hoặc [LƯU CÀI ĐẶT].`
+        : '✕ Không tìm thấy API Key hợp lệ trong file.',
+      Boolean(extracted)
+    );
     (document.getElementById('setKey') as HTMLInputElement).value = extracted;
   };
 
   document.getElementById('testApiBtn')!.onclick = async () => {
     const typedKey = (document.getElementById('setKey') as HTMLInputElement).value.trim();
     const modelVal = (document.getElementById('setModel') as HTMLSelectElement).value;
+    const testBtn = document.getElementById('testApiBtn') as HTMLButtonElement;
     isTestingApi = true;
-    apiTestMsg = 'Đang kiểm tra kết nối tới Google Gemini API...';
-    apiTestOk = null;
-    renderApp();
-    document.getElementById('settingsModal')!.classList.add('open');
-    (document.getElementById('setKey') as HTMLInputElement).value = typedKey;
+    testBtn.disabled = true;
+    testBtn.textContent = 'ĐANG KIỂM TRA...';
+    updateApiTestDom('Đang kiểm tra kết nối tới Google Gemini API...', null);
     try {
       const res = await invoke<ApiTestResult>('test_gemini_connection', {
         apiKey: typedKey || null,
         model: modelVal,
       });
-      apiTestMsg = res.message;
-      apiTestOk = res.ok;
+      updateApiTestDom(res.message, res.ok);
     } catch (err) {
-      apiTestMsg = `✕ ${String(err)}`;
-      apiTestOk = false;
+      updateApiTestDom(`✕ ${String(err)}`, false);
     } finally {
       isTestingApi = false;
-      renderApp();
-      document.getElementById('settingsModal')!.classList.add('open');
-      (document.getElementById('setKey') as HTMLInputElement).value = typedKey;
+      testBtn.disabled = false;
+      testBtn.textContent = 'KIỂM TRA KẾT NỐI API';
     }
   };
 
   document.getElementById('clearKeyBtn')!.onclick = async () => {
     await invoke('clear_gemini_api_key');
     dash = await invoke<DashboardState>('get_dashboard');
-    apiTestMsg = '✓ Đã xóa Gemini API Key khỏi SQLite.';
-    apiTestOk = true;
-    renderApp();
-    document.getElementById('settingsModal')!.classList.add('open');
+    updateApiTestDom('✓ Đã xóa Gemini API Key khỏi SQLite.', true);
+    const lbl = document.getElementById('setKeyLabel');
+    if (lbl) lbl.textContent = 'Gemini API Key (Chưa có)';
+    const clearBtn = document.getElementById('clearKeyBtn') as HTMLButtonElement | null;
+    if (clearBtn) clearBtn.disabled = true;
   };
 
   document.getElementById('settingsToRoadmapBtn')!.onclick = () => {
     settingsModal.classList.remove('open');
-    document.getElementById('roadmapModal')!.classList.add('open');
+    openClassModal(document.getElementById('roadmapModal')!);
   };
 
   document.getElementById('reopenWelcomeBtn')!.onclick = () => {
@@ -4090,6 +4238,7 @@ function bindEvents() {
     welcomeStep = 1;
     welcomeMsg = '';
     welcomeOk = null;
+    pendingModalFocus = true;
     renderApp();
   };
 
@@ -4097,8 +4246,7 @@ function bindEvents() {
     btn.onclick = async () => {
       if (!dash) return;
       dash.settings = await invoke('update_settings', { theme: btn.dataset.pickTheme! });
-      renderApp();
-      document.getElementById('settingsModal')!.classList.add('open');
+      applyThemeInPlace(dash.settings.theme);
     };
   });
 
@@ -4111,11 +4259,16 @@ function bindEvents() {
       backupMsg = `✕ ${String(err)}`;
       backupOk = false;
     }
-    renderApp();
-    document.getElementById('settingsModal')!.classList.add('open');
+    const el = document.getElementById('backupStatusMsg');
+    if (el) {
+      el.textContent = backupMsg;
+      el.className = `status-msg ${backupOk === true ? 'ok' : backupOk === false ? 'err' : ''}`.trim();
+      el.style.display = backupMsg ? 'block' : 'none';
+    }
   };
 
   document.getElementById('importBackupBtn')!.onclick = async () => {
+    const prevScroll = settingsModal.querySelector<HTMLElement>('.modal-box')?.scrollTop || 0;
     try {
       const res = await invoke<RestoreResultDto>('import_db_backup');
       backupMsg = res.message;
@@ -4131,7 +4284,10 @@ function bindEvents() {
       backupOk = false;
     }
     renderApp();
-    document.getElementById('settingsModal')!.classList.add('open');
+    const reopened = document.getElementById('settingsModal')!;
+    reopened.classList.add('open');
+    const box = reopened.querySelector<HTMLElement>('.modal-box');
+    if (box) box.scrollTop = prevScroll;
   };
 
   const widgetChk = document.getElementById('setWidgetEnabled') as HTMLInputElement | null;
@@ -4146,16 +4302,25 @@ function bindEvents() {
         widgetStatusMsg = `✕ ${String(err)}`;
         widgetChk.checked = !widgetChk.checked;
       }
-      renderApp();
-      document.getElementById('settingsModal')!.classList.add('open');
+      const el = document.getElementById('widgetStatusMsg');
+      if (el) {
+        el.textContent = widgetStatusMsg;
+        el.style.display = widgetStatusMsg ? 'block' : 'none';
+      }
     };
   }
 
   document.querySelectorAll<HTMLButtonElement>('.settings-level-card').forEach((btn) => {
     btn.onclick = async () => {
+      const prevScroll = settingsModal.querySelector<HTMLElement>('.modal-box')?.scrollTop || 0;
       await switchStudyLevel(btn.dataset.pickLevel!);
       renderApp();
-      document.getElementById('settingsModal')?.classList.add('open');
+      const reopened = document.getElementById('settingsModal');
+      if (reopened) {
+        reopened.classList.add('open');
+        const box = reopened.querySelector<HTMLElement>('.modal-box');
+        if (box) box.scrollTop = prevScroll;
+      }
     };
   });
 
@@ -4178,6 +4343,7 @@ function bindEvents() {
     });
     dash = await invoke<DashboardState>('get_dashboard');
     settingsModal.classList.remove('open');
+    pendingRestoreFocus = true;
     renderApp();
   };
 
@@ -4187,7 +4353,7 @@ function bindEvents() {
     btn.onclick = async () => {
       if (!dash) return;
       dash.settings = await invoke('update_settings', { theme: btn.dataset.pickTheme! });
-      renderApp();
+      applyThemeInPlace(dash.settings.theme);
     };
   });
   document.querySelectorAll<HTMLButtonElement>('.welcome-level-card').forEach((btn) => {
@@ -4297,19 +4463,23 @@ function bindEvents() {
 
   // Roadmap Import Modal
   const roadmapModal = document.getElementById('roadmapModal')!;
-  document.getElementById('openRoadmapModalBtn')?.addEventListener('click', () => roadmapModal.classList.add('open'));
+  const closeRoadmap = () => closeClassModal(roadmapModal);
+  document.getElementById('openRoadmapModalBtn')?.addEventListener('click', () => openClassModal(roadmapModal));
   document.getElementById('openSampleMdBtn')?.addEventListener('click', async () => {
+    rememberModalTrigger();
     roadmapDraftMd = await invoke<string>('get_sample_roadmap_md');
     roadmapPreview = await invoke<RoadmapPreview>('preview_roadmap_md', { markdown: roadmapDraftMd });
     roadmapStatusMsg = '✓ Đã nạp sẵn mẫu chuẩn XD4T-1ELTS v1.6.0 để bạn xem / chỉnh sửa.';
     roadmapStatusOk = true;
     renderApp();
-    document.getElementById('roadmapModal')!.classList.add('open');
+    const reopened = document.getElementById('roadmapModal')!;
+    reopened.classList.add('open');
+    focusActiveDialog();
   });
-  document.getElementById('closeRoadmapBtn')!.onclick = () => roadmapModal.classList.remove('open');
-  document.getElementById('cancelRoadmapBtn')!.onclick = () => roadmapModal.classList.remove('open');
+  document.getElementById('closeRoadmapBtn')!.onclick = closeRoadmap;
+  document.getElementById('cancelRoadmapBtn')!.onclick = closeRoadmap;
   roadmapModal.onclick = (e) => {
-    if (e.target === roadmapModal) roadmapModal.classList.remove('open');
+    if (e.target === roadmapModal) closeRoadmap();
   };
 
   const roadmapMdInput = document.getElementById('roadmapMdInput') as HTMLTextAreaElement;
@@ -4391,6 +4561,7 @@ function bindEvents() {
       roadmapStatusMsg = '✓ Đã áp dụng lộ trình mới!';
       roadmapStatusOk = true;
       roadmapModal.classList.remove('open');
+      pendingRestoreFocus = true;
       renderApp();
     } catch (err) {
       roadmapStatusMsg = `✕ ${String(err)}`;
@@ -4407,17 +4578,18 @@ function bindEvents() {
       const sel = document.getElementById('scSkill') as HTMLSelectElement | null;
       if (sel) sel.value = skill;
     }
-    scoreModal.classList.add('open');
+    openClassModal(scoreModal);
   };
+  const closeScoreModal = () => closeClassModal(scoreModal);
   document.getElementById('openScoreModalBtn')!.onclick = () => openScoreForSkill();
   document.getElementById('openScoreTab1Btn')?.addEventListener('click', () => openScoreForSkill());
   document.querySelectorAll<HTMLElement>('[data-band-skill]').forEach((el) => {
     bindActivate(el, () => openScoreForSkill(el.dataset.bandSkill));
   });
-  document.getElementById('closeScoreBtn')!.onclick = () => scoreModal.classList.remove('open');
-  document.getElementById('cancelScoreBtn')!.onclick = () => scoreModal.classList.remove('open');
+  document.getElementById('closeScoreBtn')!.onclick = closeScoreModal;
+  document.getElementById('cancelScoreBtn')!.onclick = closeScoreModal;
   scoreModal.onclick = (e) => {
-    if (e.target === scoreModal) scoreModal.classList.remove('open');
+    if (e.target === scoreModal) closeScoreModal();
   };
   document.getElementById('saveScoreBtn')!.onclick = async () => {
     const skill = (document.getElementById('scSkill') as HTMLSelectElement).value;
@@ -4426,6 +4598,7 @@ function bindEvents() {
     const note = (document.getElementById('scNote') as HTMLInputElement).value.trim();
     dash = await invoke<DashboardState>('add_practice_score', { skill, source, score, note });
     scoreModal.classList.remove('open');
+    pendingRestoreFocus = true;
     renderApp();
   };
 
@@ -4438,6 +4611,7 @@ function bindEvents() {
   });
   const closeAiPack = () => {
     aiPackOpen = false;
+    pendingRestoreFocus = true;
     renderApp();
   };
   document.getElementById('closeAiPackBtn')?.addEventListener('click', closeAiPack);
@@ -4481,11 +4655,14 @@ function bindEvents() {
 
   // Keyboard Cheatsheet Overlay
   document.getElementById('openShortcutsBtn')?.addEventListener('click', () => {
+    rememberModalTrigger();
     shortcutsModalOpen = true;
+    pendingModalFocus = true;
     renderApp();
   });
   const closeShortcuts = () => {
     shortcutsModalOpen = false;
+    pendingRestoreFocus = true;
     renderApp();
   };
   document.getElementById('closeShortcutsBtn')?.addEventListener('click', closeShortcuts);
@@ -4496,6 +4673,29 @@ function bindEvents() {
 
 // Unified Keyboard-First Dispatcher (0-mouse-click study flow)
 document.addEventListener('keydown', (e) => {
+  const activeDialog = getActiveDialogEl();
+  if (e.key === 'Tab' && activeDialog) {
+    const focusables = getFocusableElements(activeDialog);
+    if (focusables.length === 0) {
+      e.preventDefault();
+      activeDialog.focus();
+      return;
+    }
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const cur = document.activeElement as HTMLElement | null;
+    if (e.shiftKey) {
+      if (!cur || cur === first || !activeDialog.contains(cur)) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else if (!cur || cur === last || !activeDialog.contains(cur)) {
+      e.preventDefault();
+      first.focus();
+    }
+    return;
+  }
+
   const target = e.target as HTMLElement | null;
   const activeTag = target?.tagName;
   const isTyping = Boolean(
@@ -4507,16 +4707,19 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (chartZoomOpen) {
       chartZoomOpen = false;
+      pendingRestoreFocus = true;
       renderApp();
       return;
     }
     if (shortcutsModalOpen) {
       shortcutsModalOpen = false;
+      pendingRestoreFocus = true;
       renderApp();
       return;
     }
     if (aiPackOpen) {
       aiPackOpen = false;
+      pendingRestoreFocus = true;
       renderApp();
       return;
     }
@@ -4528,6 +4731,7 @@ document.addEventListener('keydown', (e) => {
     }
     if (addVocabOpen) {
       addVocabOpen = false;
+      pendingRestoreFocus = true;
       renderApp();
       return;
     }
@@ -4537,6 +4741,7 @@ document.addEventListener('keydown', (e) => {
     }
     if (hasModalBackdrop) {
       document.querySelectorAll('.modal-backdrop.open').forEach((m) => m.classList.remove('open'));
+      restoreModalTriggerFocus();
       return;
     }
     if (isTyping) {
@@ -4548,7 +4753,14 @@ document.addEventListener('keydown', (e) => {
   // 2. Global '?' cheatsheet toggle
   if ((e.key === '?' || (e.shiftKey && e.key === '/')) && !isTyping && !e.ctrlKey && !e.altKey && !e.metaKey) {
     e.preventDefault();
-    shortcutsModalOpen = !shortcutsModalOpen;
+    if (!shortcutsModalOpen) {
+      rememberModalTrigger();
+      shortcutsModalOpen = true;
+      pendingModalFocus = true;
+    } else {
+      shortcutsModalOpen = false;
+      pendingRestoreFocus = true;
+    }
     renderApp();
     return;
   }

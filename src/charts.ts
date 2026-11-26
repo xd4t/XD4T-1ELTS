@@ -141,7 +141,7 @@ function renderLineSvg(spec: Omit<LineBarSpec, 'type'>, compact = false): string
     paths += `<path d="${d}" fill="none" stroke="${color}" stroke-width="2.4" stroke-linejoin="round" />`;
     pts.forEach((p) => {
       paths += `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3.4" fill="${color}" stroke="#fff" stroke-width="1" />`;
-      paths += `<text x="${p.x.toFixed(1)}" y="${(p.y - 6).toFixed(1)}" text-anchor="middle" font-size="9.5" font-weight="700" fill="${color}">${escHtml(String(p.v))}</text>`;
+      paths += `<text x="${p.x.toFixed(1)}" y="${(p.y - 6).toFixed(1)}" text-anchor="middle" font-size="9.5" font-weight="700" fill="var(--m-fg)">${escHtml(String(p.v))}</text>`;
     });
   });
 
@@ -271,7 +271,7 @@ function renderPieSvg(spec: PieSpec): string {
           const mid = (startAngle + endAngle) / 2;
           const lx = cx + r * 0.65 * Math.cos(mid);
           const ly = cy + r * 0.65 * Math.sin(mid) + 3;
-          arcs += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" font-size="10" font-weight="700" fill="#fff">${escHtml(String(sv))}%</text>`;
+          arcs += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" font-size="10" font-weight="700" fill="#fff" style="paint-order:stroke;stroke:rgba(0,0,0,0.58);stroke-width:2.5px;stroke-linejoin:round;">${escHtml(String(sv))}%</text>`;
         }
         startAngle = endAngle;
       });
